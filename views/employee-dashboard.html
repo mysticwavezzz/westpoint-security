@@ -1035,20 +1035,35 @@
 
     async function pollBodycamLive() {
       if (!bodycamLiveId) return;
+      const statusEl = document.getElementById('bodycamLiveStatus');
       try {
         const res = await fetch(`/api/bodycam/${encodeURIComponent(bodycamLiveId)}/chunks?since=${bodycamLiveLastIndex}`);
         if (!res.ok) {
-          document.getElementById('bodycamLiveStatus').innerText = 'Feed unavailable.';
+          const errData = await res.json().catch(() => ({}));
+          statusEl.innerText = 'Feed unavailable: ' + (errData.error || res.status);
           return;
         }
         const data = await res.json();
+        let chunkFailures = 0;
         for (const chunk of data.chunks) {
-          const chunkRes = await fetch(chunk.url);
-          const buf = await chunkRes.arrayBuffer();
-          bodycamLiveQueue.push(buf);
-          bodycamLiveLastIndex = Math.max(bodycamLiveLastIndex, chunk.index);
+          try {
+            const chunkRes = await fetch(chunk.url);
+            if (!chunkRes.ok) throw new Error('HTTP ' + chunkRes.status);
+            const buf = await chunkRes.arrayBuffer();
+            bodycamLiveQueue.push(buf);
+            bodycamLiveLastIndex = Math.max(bodycamLiveLastIndex, chunk.index);
+          } catch (chunkErr) {
+            chunkFailures++;
+            console.error('Bodycam chunk fetch failed', chunk.url, chunkErr);
+          }
         }
-        document.getElementById('bodycamLiveStatus').innerText = data.status === 'recording'
+        if (chunkFailures > 0 && bodycamLiveQueue.length === 0) {
+          // Almost always a CORS/bucket-policy problem on the R2 side, not a
+          // transient blip - surface that plainly instead of just "Connecting…" forever.
+          statusEl.innerText = 'Could not load video from storage (check R2 CORS policy / credentials). See browser console for details.';
+          return;
+        }
+        statusEl.innerText = data.status === 'recording'
           ? 'Live — a few seconds behind real time'
           : 'Recording has ended.';
         pumpBodycamLiveQueue();
@@ -1058,6 +1073,7 @@
         }
       } catch (e) {
         console.error('Bodycam live poll error', e);
+        statusEl.innerText = 'Connection error: ' + e.message + ' (see browser console)';
       }
     }
 
