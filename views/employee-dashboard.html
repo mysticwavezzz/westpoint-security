@@ -815,6 +815,8 @@
       }, BODYCAM_RECORD_MS);
     }
 
+    let bodycamUploadFailureStreak = 0;
+
     function uploadBodycamSegment(blob) {
       if (!bodycamId) return;
       const idx = bodycamChunkIndex++;
@@ -829,10 +831,23 @@
           if (data.error === 'storage_limit_reached') {
             showBodycamNotice('Bodycam storage limit reached - recording stopped automatically.', 'error');
             stopBodycam();
+            return;
           }
         }
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          bodycamUploadFailureStreak++;
+          console.error('Bodycam segment upload rejected', res.status, data.error);
+          showBodycamNotice(`Clip ${idx} failed to upload: ${data.error || res.status}${bodycamUploadFailureStreak >= 3 ? ' (repeated failures - check your connection)' : ''}`, 'error');
+          return;
+        }
+        bodycamUploadFailureStreak = 0;
         refreshBodycamStorageStatus();
-      }).catch(err => console.error('Bodycam segment upload failed', err));
+      }).catch(err => {
+        bodycamUploadFailureStreak++;
+        console.error('Bodycam segment upload failed', err);
+        showBodycamNotice(`Clip ${idx} failed to upload (network error)${bodycamUploadFailureStreak >= 3 ? ' - repeated failures, check your connection' : ''}.`, 'error');
+      });
     }
 
     async function stopBodycam() {
@@ -1093,47 +1108,64 @@
     }
 
     // ============== LIVE BODYCAM VIEWER (Supervisor+) ==============
-    // Uses MediaSource/SourceBuffer, not a plain <video src> swap: only the
-    // first uploaded chunk carries the WebM header, so later chunks have to
-    // be appended to a live stream buffer to play at all.
+    // Recording moved to independent 15-second segments (each its own
+    // self-contained webm file, own header included) rather than one
+    // continuous stream cut into raw fragments - MediaSource/SourceBuffer
+    // needs exactly one shared header for everything appended to it, so it
+    // broke once recording changed. Segments play directly via <video src>
+    // instead, one at a time in order. This also fixes slow catch-up as a
+    // side effect: opening the viewer jumps straight to the most recently
+    // completed segment instead of downloading and playing through
+    // everything recorded so far on a shift already 10-30 minutes in.
     let bodycamLivePollTimer = null;
-    let bodycamLiveMediaSource = null;
-    let bodycamLiveSourceBuffer = null;
-    let bodycamLiveQueue = [];
-    let bodycamLiveLastIndex = -1;
     let bodycamLiveId = null;
-    // True until the first backlog (everything recorded before the viewer
-    // opened) has finished appending - MSE needs chunk 0's header before it
-    // will accept anything, so the backlog can't just be skipped outright.
-    // Instead it's downloaded in parallel and fast, then the playhead jumps
-    // to the live edge once it's all buffered, rather than playing through
-    // however many minutes already happened before the Supervisor tuned in.
-    let bodycamLiveIsInitialSync = true;
+    let bodycamLiveLastIndex = -1;
+    let bodycamLiveQueue = [];
+    let bodycamLivePlaying = false;
 
     function openBodycamLive(bcId, officerName) {
       bodycamLiveId = bcId;
       bodycamLiveLastIndex = -1;
       bodycamLiveQueue = [];
-      bodycamLiveIsInitialSync = true;
+      bodycamLivePlaying = false;
       document.getElementById('bodycamLiveTitle').innerText = 'Live Bodycam — ' + officerName;
       document.getElementById('bodycamLiveStatus').innerText = 'Connecting…';
       document.getElementById('bodycamLiveModal').style.display = 'flex';
 
       const liveVideo = document.getElementById('bodycamLiveVideo');
-      bodycamLiveMediaSource = new MediaSource();
-      liveVideo.src = URL.createObjectURL(bodycamLiveMediaSource);
+      liveVideo.src = '';
+      liveVideo.onended = () => { bodycamLivePlaying = false; playNextBodycamLiveSegment(); };
 
-      bodycamLiveMediaSource.addEventListener('sourceopen', () => {
-        try {
-          bodycamLiveSourceBuffer = bodycamLiveMediaSource.addSourceBuffer('video/webm;codecs="vp8"');
-          bodycamLiveSourceBuffer.addEventListener('updateend', pumpBodycamLiveQueue);
-        } catch (e) {
-          document.getElementById('bodycamLiveStatus').innerText = 'This browser cannot play the live feed (codec unsupported).';
+      pollBodycamLiveFirst();
+      bodycamLivePollTimer = setInterval(pollBodycamLive, 6000);
+    }
+
+    // First poll after opening: jump straight to the latest completed
+    // segment rather than queuing the whole backlog - this is what makes
+    // joining an already-running shift fast instead of slow.
+    async function pollBodycamLiveFirst() {
+      const statusEl = document.getElementById('bodycamLiveStatus');
+      try {
+        const res = await fetch(`/api/bodycam/${encodeURIComponent(bodycamLiveId)}/chunks?since=-1`);
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          statusEl.innerText = 'Feed unavailable: ' + (errData.error || res.status);
+          return;
         }
-      }, { once: true });
-
-      pollBodycamLive();
-      bodycamLivePollTimer = setInterval(pollBodycamLive, 4000);
+        const data = await res.json();
+        if (data.chunks.length > 0) {
+          const latest = data.chunks[data.chunks.length - 1];
+          bodycamLiveLastIndex = latest.index;
+          bodycamLiveQueue = [latest.url];
+          playNextBodycamLiveSegment();
+        } else {
+          bodycamLiveLastIndex = -1;
+          statusEl.innerText = data.status === 'recording' ? 'Waiting for the first clip…' : 'No recording yet.';
+        }
+      } catch (e) {
+        console.error('Bodycam live first poll error', e);
+        statusEl.innerText = 'Connection error: ' + e.message + ' (see browser console)';
+      }
     }
 
     async function pollBodycamLive() {
@@ -1147,42 +1179,16 @@
           return;
         }
         const data = await res.json();
-        if (data.chunks.length > 0) {
-          if (bodycamLiveIsInitialSync && data.chunks.length > 1) {
-            statusEl.innerText = `Catching up (${data.chunks.length} segments already recorded)…`;
-          }
-          // Fetched in parallel - sequentially awaiting each one meant a
-          // Supervisor joining a shift already 10+ minutes in could wait
-          // upwards of a minute before the backlog even finished downloading.
-          const results = await Promise.all(data.chunks.map(async chunk => {
-            try {
-              const chunkRes = await fetch(chunk.url);
-              if (!chunkRes.ok) throw new Error('HTTP ' + chunkRes.status);
-              return { index: chunk.index, buf: await chunkRes.arrayBuffer() };
-            } catch (chunkErr) {
-              console.error('Bodycam chunk fetch failed', chunk.url, chunkErr);
-              return null;
-            }
-          }));
-          const ok = results.filter(Boolean).sort((a, b) => a.index - b.index);
-          if (ok.length === 0) {
-            statusEl.innerText = 'Could not load video from storage (check R2 CORS policy / credentials). See browser console for details.';
-            return;
-          }
-          ok.forEach(r => {
-            bodycamLiveQueue.push(r.buf);
-            bodycamLiveLastIndex = Math.max(bodycamLiveLastIndex, r.index);
-          });
-        }
-        if (!bodycamLiveIsInitialSync || data.chunks.length === 0) {
-          statusEl.innerText = data.status === 'recording'
-            ? 'Live — a few seconds behind real time'
-            : 'Recording has ended.';
-        }
-        pumpBodycamLiveQueue();
-        if (data.status !== 'recording' && bodycamLivePollTimer) {
-          clearInterval(bodycamLivePollTimer);
-          bodycamLivePollTimer = null;
+        data.chunks.forEach(chunk => {
+          bodycamLiveQueue.push(chunk.url);
+          bodycamLiveLastIndex = Math.max(bodycamLiveLastIndex, chunk.index);
+        });
+        if (!bodycamLivePlaying) playNextBodycamLiveSegment();
+        if (data.status !== 'recording') {
+          statusEl.innerText = 'Recording has ended.';
+          if (bodycamLivePollTimer) { clearInterval(bodycamLivePollTimer); bodycamLivePollTimer = null; }
+        } else if (!bodycamLivePlaying && bodycamLiveQueue.length === 0) {
+          statusEl.innerText = 'Live — waiting for the next clip…';
         }
       } catch (e) {
         console.error('Bodycam live poll error', e);
@@ -1190,47 +1196,27 @@
       }
     }
 
-    function seekBodycamLiveToEdge() {
+    function playNextBodycamLiveSegment() {
+      if (bodycamLiveQueue.length === 0) { bodycamLivePlaying = false; return; }
+      const url = bodycamLiveQueue.shift();
       const liveVideo = document.getElementById('bodycamLiveVideo');
-      try {
-        const buffered = liveVideo.buffered;
-        if (buffered.length > 0) {
-          liveVideo.currentTime = Math.max(0, buffered.end(buffered.length - 1) - 0.5);
-        }
-        liveVideo.play().catch(() => {});
-      } catch (e) {
-        console.error('Bodycam seek-to-live error', e);
-      }
+      bodycamLivePlaying = true;
+      liveVideo.src = url;
+      liveVideo.play().catch(() => {});
       document.getElementById('bodycamLiveStatus').innerText = 'Live — a few seconds behind real time';
-    }
-
-    function pumpBodycamLiveQueue() {
-      if (!bodycamLiveSourceBuffer || bodycamLiveSourceBuffer.updating) return;
-      if (bodycamLiveQueue.length === 0) {
-        if (bodycamLiveIsInitialSync) {
-          bodycamLiveIsInitialSync = false;
-          seekBodycamLiveToEdge();
-        }
-        return;
-      }
-      const next = bodycamLiveQueue.shift();
-      try {
-        bodycamLiveSourceBuffer.appendBuffer(next);
-      } catch (e) {
-        console.error('Bodycam appendBuffer error', e);
-      }
     }
 
     function closeBodycamLive() {
       if (bodycamLivePollTimer) clearInterval(bodycamLivePollTimer);
       bodycamLivePollTimer = null;
       bodycamLiveId = null;
-      bodycamLiveSourceBuffer = null;
-      bodycamLiveMediaSource = null;
       bodycamLiveQueue = [];
-      bodycamLiveIsInitialSync = true;
+      bodycamLivePlaying = false;
       document.getElementById('bodycamLiveModal').style.display = 'none';
-      document.getElementById('bodycamLiveVideo').src = '';
+      const liveVideo = document.getElementById('bodycamLiveVideo');
+      liveVideo.pause();
+      liveVideo.onended = null;
+      liveVideo.src = '';
     }
 
     function bodycamLiveFullscreen() {

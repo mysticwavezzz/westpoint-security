@@ -591,6 +591,7 @@ async function revalidateSession(sessionId, session) {
 // drifts (a crashed finalize job, manual bucket edits, etc.).
 // -------------------------------------------------------------
 const BODYCAM_STORAGE_LIMIT_BYTES = 9.9 * 1024 * 1024 * 1024; // 9.9 GiB, just under the 10GB-month free tier
+const BODYCAM_SEGMENT_MS = 15000; // must match BODYCAM_RECORD_MS in employee-dashboard.html
 let bodycamStorageBytes = 0;
 let bodycamStorageReady = false;
 
@@ -610,11 +611,12 @@ function isBodycamStorageFull() {
   return bodycamStorageReady && bodycamStorageBytes >= BODYCAM_STORAGE_LIMIT_BYTES;
 }
 
-// Downloads every uploaded chunk for a finished bodycam session, merges them
-// into one mp4 with ffmpeg, uploads the result, and drops the now-redundant
-// chunk objects. Runs after the response to /api/bodycam/stop has already
-// gone out - a multi-hour shift's worth of video can take a while to
-// transcode, and the officer shouldn't have to wait on that HTTP request.
+// Downloads every uploaded chunk for a finished bodycam session, stream-copy
+// concatenates them into one webm (no re-encoding - see lib/video.js for why
+// that matters), uploads the result, and drops the now-redundant chunk
+// objects. Runs after the response to /api/bodycam/stop has already gone
+// out, though the whole point of the stream-copy approach is that this no
+// longer takes long enough for that to matter much.
 async function finalizeBodycamSession(bodycamId) {
   const db = getBotDb();
   const chunks = await r2.listObjectsWithSize(`bodycam/${bodycamId}/chunk-`);
@@ -623,9 +625,11 @@ async function finalizeBodycamSession(bodycamId) {
     return;
   }
 
-  const localChunkPaths = [];
+  let localChunkPaths = [];
   try {
-    for (const chunk of chunks) {
+    // Downloaded in parallel - chunks.map preserves order in the results
+    // regardless of which finishes first, which concatenation depends on.
+    localChunkPaths = await Promise.all(chunks.map(async chunk => {
       const { stream } = await r2.getObjectStream(chunk.key);
       const localPath = video.tempPath('webm');
       await new Promise((resolve, reject) => {
@@ -635,21 +639,27 @@ async function finalizeBodycamSession(bodycamId) {
         out.on('finish', resolve);
         out.on('error', reject);
       });
-      localChunkPaths.push(localPath);
-    }
+      return localPath;
+    }));
 
-    const { path: mergedPath, durationSeconds } = await video.mergeChunksToMp4(localChunkPaths);
+    const { path: mergedPath } = await video.mergeChunksToWebm(localChunkPaths);
+    // Estimated from segment count, not probed from the file - see
+    // lib/video.js for why (no bundled ffprobe binary). The last segment of
+    // a shift is sometimes shorter than a full 15s (duty ended mid-clip),
+    // so this can run slightly long, which is fine for display/trim-range
+    // purposes.
+    const durationSeconds = chunks.length * (BODYCAM_SEGMENT_MS / 1000);
     let mergedSize = 0;
     try {
       mergedSize = fs.statSync(mergedPath).size;
-      await r2.putObject(`bodycam/${bodycamId}/final.mp4`, fs.readFileSync(mergedPath), 'video/mp4');
+      await r2.putObject(`bodycam/${bodycamId}/final.webm`, fs.readFileSync(mergedPath), 'video/webm');
     } finally {
       try { fs.unlinkSync(mergedPath); } catch (e) {}
     }
 
     await r2.deleteObjects(chunks.map(c => c.key));
     const chunkBytesFreed = chunks.reduce((sum, c) => sum + c.size, 0);
-    bodycamStorageBytes += mergedSize - chunkBytesFreed; // usually net negative - the encoded mp4 is smaller than the raw chunks
+    bodycamStorageBytes += mergedSize - chunkBytesFreed; // stream copy means this is just container overhead, not a real re-encode saving
     db.prepare("UPDATE bodycam_sessions SET status = 'ready', duration_seconds = ? WHERE id = ?").run(durationSeconds || 0, bodycamId);
   } finally {
     localChunkPaths.forEach(p => { try { fs.unlinkSync(p); } catch (e) {} });
@@ -1604,9 +1614,13 @@ const server = http.createServer(async (req, res) => {
     }
     if (bcSession.status !== 'ready') return sendJSON(res, 409, { error: `Recording is ${bcSession.status}, not ready yet.` });
     try {
-      const key = `bodycam/${bodycamId}/final.mp4`;
+      // .webm, not .mp4 - see lib/video.js for why: stream-copy concat can't
+      // losslessly produce an MP4 from VP8 input, and re-encoding to H.264
+      // for every single shift was the actual cause of slow "processing".
+      // Every modern browser plays webm natively, same as mp4.
+      const key = `bodycam/${bodycamId}/final.webm`;
       const playbackUrl = await r2.presignedGetUrl(key, 3600);
-      const downloadUrl = await r2.presignedGetUrl(key, 3600, `bodycam-${bodycamId}.mp4`);
+      const downloadUrl = await r2.presignedGetUrl(key, 3600, `bodycam-${bodycamId}.webm`);
       return sendJSON(res, 200, { url: playbackUrl, downloadUrl, durationSeconds: bcSession.duration_seconds });
     } catch (e) {
       return sendJSON(res, 500, { error: 'Failed to generate playback link' });
@@ -1631,8 +1645,8 @@ const server = http.createServer(async (req, res) => {
 
     let localFinal, localTrim;
     try {
-      const { stream } = await r2.getObjectStream(`bodycam/${bodycamId}/final.mp4`);
-      localFinal = video.tempPath('mp4');
+      const { stream } = await r2.getObjectStream(`bodycam/${bodycamId}/final.webm`);
+      localFinal = video.tempPath('webm');
       await new Promise((resolve, reject) => {
         const out = fs.createWriteStream(localFinal);
         stream.pipe(out);
@@ -1641,7 +1655,10 @@ const server = http.createServer(async (req, res) => {
         out.on('error', reject);
       });
 
-      localTrim = await video.trimMp4(localFinal, startSeconds, endSeconds);
+      // This is the one path that does still transcode (to H.264 mp4, for
+      // broad download compatibility) - on demand, only when someone's
+      // actively waiting on a specific clip, unlike the merge step above.
+      localTrim = await video.trimToMp4(localFinal, startSeconds, endSeconds);
       const trimKey = `bodycam/${bodycamId}/trim-${Date.now()}.mp4`;
       const trimBuffer = fs.readFileSync(localTrim);
       await r2.putObject(trimKey, trimBuffer, 'video/mp4');
