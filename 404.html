@@ -151,7 +151,7 @@
             container.innerHTML = data.news.map(item => `
               <article>
                 <div class="news-meta">Westpoint Security · ${escapeHtml(item.category || 'Notice')} · ${escapeHtml(item.date || '')}</div>
-                <h3>${escapeHtml(item.title)}</h3>
+                <h3><a href="/newsroom">${escapeHtml(item.title)}</a></h3>
                 <p>${escapeHtml(item.summary)}</p>
               </article>
             `).join('');

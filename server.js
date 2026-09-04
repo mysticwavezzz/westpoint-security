@@ -976,11 +976,11 @@ const server = http.createServer(async (req, res) => {
     const body = await parseBody(req);
     const newArticle = {
       id: 'NEWS-' + Math.floor(1000 + Math.random() * 9000),
-      title: body.title || 'Official Notice',
+      title: String(body.title || 'Official Notice').trim().slice(0, 150),
       author: currentSession.displayName,
       date: new Date().toISOString().split('T')[0],
-      category: body.category || 'Department Notice',
-      summary: body.summary || ''
+      category: String(body.category || 'Department Notice').trim().slice(0, 100),
+      summary: String(body.summary || '').trim().slice(0, 2000)
     };
 
     const news = readJSONFile('news.json', []);
