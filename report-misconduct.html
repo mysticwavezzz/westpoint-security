@@ -56,7 +56,7 @@
               To ensure authenticity and prevent fraudulent or duplicate filings, you must sign in with your verified Discord account to submit an official misconduct report or officer commendation.
             </p>
             <div style="margin: 18px 0 10px;">
-              <a href="/auth/discord" class="period-button period-button-discord" style="font-size: 11px; padding: 10px 24px;">
+              <a id="btnDiscordReportAuth" href="/auth/discord" class="period-button period-button-discord" style="font-size: 11px; padding: 10px 24px;">
                 [ SIGN IN WITH DISCORD TO SUBMIT ]
               </a>
             </div>
@@ -123,19 +123,66 @@
   </div>
 
   <script>
+    const CLIENT_ID = '1540023346794856540';
+    const isStaticHost = window.location.hostname.includes('github.io') || window.location.protocol === 'file:';
+
+    // Set OAuth redirect URL dynamically
+    const authBtn = document.getElementById('btnDiscordReportAuth');
+    if (isStaticHost) {
+      const redirectUri = window.location.origin + window.location.pathname;
+      authBtn.href = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=token&scope=identify`;
+    } else {
+      authBtn.href = '/auth/discord';
+    }
+
     async function checkAuthAndInit() {
+      // 1. Check if token in URL hash
+      const hash = window.location.hash.substring(1);
+      if (hash) {
+        const params = new URLSearchParams(hash);
+        const token = params.get('access_token');
+        if (token) {
+          try {
+            const uRes = await fetch('https://discord.com/api/v10/users/@me', {
+              headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (uRes.ok) {
+              const uObj = await uRes.json();
+              const sess = {
+                id: uObj.id,
+                username: uObj.username,
+                displayName: uObj.global_name || uObj.username
+              };
+              localStorage.setItem('wp_citizen_session', JSON.stringify(sess));
+              window.location.hash = '';
+            }
+          } catch(e) {}
+        }
+      }
+
+      // 2. Check server session
+      let activeUser = null;
       try {
         const res = await fetch('/api/auth/me');
         const data = await res.json();
         if (data.authenticated) {
-          document.getElementById('reportFormContainer').style.display = 'block';
-          document.getElementById('authGateNotice').style.display = 'none';
-          document.getElementById('authSubmitterName').innerText = (data.displayName || data.username) + ' (' + data.username + ')';
-        } else {
-          document.getElementById('reportFormContainer').style.display = 'none';
-          document.getElementById('authGateNotice').style.display = 'block';
+          activeUser = data;
         }
-      } catch (e) {
+      } catch (e) {}
+
+      // 3. Fallback to localStorage
+      if (!activeUser) {
+        const localSess = localStorage.getItem('wp_citizen_session') || localStorage.getItem('wp_officer_session');
+        if (localSess) {
+          try { activeUser = JSON.parse(localSess); } catch (e) {}
+        }
+      }
+
+      if (activeUser && activeUser.id) {
+        document.getElementById('reportFormContainer').style.display = 'block';
+        document.getElementById('authGateNotice').style.display = 'none';
+        document.getElementById('authSubmitterName').innerText = (activeUser.displayName || activeUser.username) + ' (' + activeUser.username + ')';
+      } else {
         document.getElementById('reportFormContainer').style.display = 'none';
         document.getElementById('authGateNotice').style.display = 'block';
       }

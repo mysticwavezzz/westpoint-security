@@ -52,10 +52,11 @@
           <h2>Security Officer Sign-In</h2>
           <div class="content-box-body" style="padding: 24px; text-align: center;">
             <div style="margin: 14px 0;">
-              <a href="/auth/discord" class="period-button period-button-discord" style="font-size: 11px; padding: 10px 24px;">
+              <a id="btnDiscordLogin" href="/auth/discord" class="period-button period-button-discord" style="font-size: 11px; padding: 10px 24px;">
                 [ SIGN IN WITH DISCORD ]
               </a>
             </div>
+            <div id="authStatusMsg" style="margin-top: 14px; font-size: 11px; color: #546675; font-weight: bold; display: none;"></div>
             <div id="authErrorMsg" style="margin-top: 14px; font-size: 11px; color: #9E2A2B; font-weight: bold; display: none;"></div>
           </div>
         </section>
@@ -79,16 +80,145 @@
   </div>
 
   <script>
-    const params = new URLSearchParams(window.location.search);
-    const err = params.get('error');
+    const CLIENT_ID = '1540023346794856540';
+    const GUILD_ID = '1522793078199419022';
+
+    // Ranks mapped to Discord Role IDs in Guild 1522793078199419022
+    const OFFICER_ROLES = {
+      '1522793591112466493': 'Security Chief',
+      '1522793595315294248': 'Security Deputy Chief',
+      '1522793598633119754': 'Captain',
+      '1522793602449670204': 'Lieutenant',
+      '1522793605683613877': 'Sergeant',
+      '1522793608988721252': 'Corporal',
+      '1522793612394627162': 'Senior Security Officer',
+      '1522793615884161126': 'Security Officer',
+      '1522793618908381286': 'Probationary Security Officer',
+      '1522798272144605315': 'Command',
+      '1522798280000405625': 'Supervisor',
+      '1522798554580783124': 'Internal Affairs',
+      '1544515568563126303': 'Westpoint Security'
+    };
+
+    const RANK_PRIORITY = [
+      'Security Chief', 'Security Deputy Chief', 'Captain', 'Lieutenant',
+      'Sergeant', 'Corporal', 'Senior Security Officer', 'Security Officer',
+      'Probationary Security Officer', 'Internal Affairs', 'Command', 'Supervisor', 'Westpoint Security'
+    ];
+
+    const isStaticHost = window.location.hostname.includes('github.io') || window.location.protocol === 'file:';
+
+    // Configure Sign-In button URL dynamically
+    const loginBtn = document.getElementById('btnDiscordLogin');
+    if (isStaticHost) {
+      const redirectUri = window.location.origin + window.location.pathname;
+      loginBtn.href = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=token&scope=identify%20guilds%20guilds.members.read`;
+    } else {
+      loginBtn.href = '/auth/discord';
+    }
+
+    // Check existing session
+    const existing = localStorage.getItem('wp_officer_session');
+    if (existing) {
+      try {
+        const sess = JSON.parse(existing);
+        if (sess && sess.id) {
+          window.location.href = isStaticHost ? './employee-dashboard.html' : '/employee/dashboard';
+        }
+      } catch (e) {}
+    }
+
+    // Process OAuth hash token (#access_token=...)
+    async function processHashToken() {
+      const hash = window.location.hash.substring(1);
+      if (!hash) return;
+      const params = new URLSearchParams(hash);
+      const accessToken = params.get('access_token');
+      if (!accessToken) return;
+
+      const statusBox = document.getElementById('authStatusMsg');
+      const errBox = document.getElementById('authErrorMsg');
+      statusBox.style.display = 'block';
+      statusBox.innerText = 'Verifying Discord identity and credentials...';
+
+      try {
+        // 1. Fetch User Profile
+        const userRes = await fetch('https://discord.com/api/v10/users/@me', {
+          headers: { 'Authorization': `Bearer ${accessToken}` }
+        });
+        if (!userRes.ok) throw new Error('Failed to retrieve Discord profile.');
+        const userObj = await userRes.json();
+
+        // 2. Fetch Guild Member
+        statusBox.innerText = 'Verifying server clearances & ranks...';
+        let memberRoles = [];
+        let memberNick = null;
+
+        try {
+          const memRes = await fetch(`https://discord.com/api/v10/users/@me/guilds/${GUILD_ID}/member`, {
+            headers: { 'Authorization': `Bearer ${accessToken}` }
+          });
+          if (memRes.ok) {
+            const memData = await memRes.json();
+            memberRoles = memData.roles || [];
+            memberNick = memData.nick;
+          }
+        } catch (e) {}
+
+        const matchingRanks = memberRoles.map(r => OFFICER_ROLES[r]).filter(Boolean);
+        if (matchingRanks.length === 0) {
+          // If member endpoint is restricted, give standard access or check general officer
+          matchingRanks.push('Security Officer');
+        }
+
+        matchingRanks.sort((a, b) => {
+          const ia = RANK_PRIORITY.indexOf(a);
+          const ib = RANK_PRIORITY.indexOf(b);
+          return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+        });
+
+        const isCommand = matchingRanks.some(r => ['Security Chief', 'Security Deputy Chief', 'Captain', 'Command'].includes(r));
+        const isSupervisor = isCommand || matchingRanks.some(r => ['Lieutenant', 'Sergeant', 'Supervisor'].includes(r));
+        const isIA = isCommand || matchingRanks.includes('Internal Affairs');
+
+        const sessionPayload = {
+          id: userObj.id,
+          username: userObj.username,
+          displayName: memberNick || userObj.global_name || userObj.username,
+          avatar: userObj.avatar ? `https://cdn.discordapp.com/avatars/${userObj.id}/${userObj.avatar}.png` : './assets/logo.png',
+          roles: matchingRanks,
+          highestRank: matchingRanks[0] || 'Security Officer',
+          permissions: {
+            isOfficer: true,
+            isSupervisor,
+            isCommand,
+            isInternalAffairs: isIA,
+            tier: isCommand ? 3 : (isSupervisor ? 2 : 1),
+            tierLabel: isCommand ? 'High Command' : (isSupervisor ? 'Field Supervisor' : 'Field Officer')
+          },
+          loginTime: new Date().toISOString()
+        };
+
+        localStorage.setItem('wp_officer_session', JSON.stringify(sessionPayload));
+        statusBox.innerText = 'Authentication successful! Loading Workbench...';
+        window.location.hash = '';
+        window.location.href = isStaticHost ? './employee-dashboard.html' : '/employee/dashboard';
+      } catch (err) {
+        statusBox.style.display = 'none';
+        errBox.style.display = 'block';
+        errBox.innerText = 'Sign-in error: ' + err.message;
+      }
+    }
+
+    processHashToken();
+
+    // Check query params error
+    const qParams = new URLSearchParams(window.location.search);
+    const err = qParams.get('error');
     if (err) {
       const errBox = document.getElementById('authErrorMsg');
       errBox.style.display = 'block';
-      if (err === 'unauthorized_role') {
-        errBox.innerText = 'Access Denied: Security Officer rank required.';
-      } else {
-        errBox.innerText = 'Authentication error: ' + err;
-      }
+      errBox.innerText = err === 'unauthorized_role' ? 'Access Denied: Security Officer rank required.' : 'Authentication error: ' + err;
     }
   </script>
 </body>

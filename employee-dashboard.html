@@ -41,7 +41,7 @@
       <a href="./report-misconduct.html">REPORT MISCONDUCT</a>
       <a href="./careers.html">CAREERS</a>
       <a href="./employee.html" class="is-active">OFFICER WORKBENCH</a>
-      <a href="/api/auth/logout">SIGN OUT</a>
+      <a href="/api/auth/logout" onclick="handleSignOut(event)">SIGN OUT</a>
     </nav>
 
     <main class="main-layout" id="main-content" tabindex="-1">
@@ -445,6 +445,17 @@
     let shiftInterval = null;
     let shiftSeconds = 0;
 
+    function handleSignOut(e) {
+      if (e) e.preventDefault();
+      localStorage.removeItem('wp_officer_session');
+      const isStatic = window.location.hostname.includes('github.io') || window.location.protocol === 'file:';
+      if (isStatic) {
+        window.location.href = './employee.html';
+      } else {
+        window.location.href = '/api/auth/logout';
+      }
+    }
+
     // Switch Tabs
     function switchTab(tabKey) {
       document.querySelectorAll('.dash-tab-btn').forEach(btn => btn.classList.remove('is-active'));
@@ -475,17 +486,36 @@
 
     // Load Officer Session
     async function loadOfficerSession() {
+      let data = null;
+      const isStatic = window.location.hostname.includes('github.io') || window.location.protocol === 'file:';
+
+      // 1. Try Backend API
       try {
         const res = await fetch('/api/auth/me');
-        const data = await res.json();
-        if (!data.authenticated) {
-          window.location.href = '/employee';
-          return;
+        const apiData = await res.json();
+        if (apiData && apiData.authenticated) {
+          data = apiData;
         }
+      } catch (e) {}
 
-        officerSession = data;
-        document.getElementById('officerNameDisplay').innerText = data.displayName || data.username;
-        document.getElementById('officerBadgeRole').innerText = data.highestRank || 'SECURITY OFFICER';
+      // 2. Fallback to localStorage (GitHub Pages Client-Side OAuth)
+      if (!data) {
+        const local = localStorage.getItem('wp_officer_session');
+        if (local) {
+          try {
+            data = JSON.parse(local);
+          } catch (e) {}
+        }
+      }
+
+      if (!data || !data.id) {
+        window.location.href = isStatic ? './employee.html' : '/employee';
+        return;
+      }
+
+      officerSession = data;
+      document.getElementById('officerNameDisplay').innerText = data.displayName || data.username;
+      document.getElementById('officerBadgeRole').innerText = data.highestRank || 'SECURITY OFFICER';
         document.getElementById('officerDiscordTag').innerText = 'Discord: ' + data.username + ' (' + data.id + ')';
         if (data.avatar) {
           document.getElementById('officerAvatar').src = data.avatar;
