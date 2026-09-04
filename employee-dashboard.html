@@ -4,29 +4,29 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Officer Workbench | Westpoint Security</title>
-  <link rel="icon" href="./assets/favicon.png" />
-  <link rel="stylesheet" href="./css/style.css" />
+  <link rel="icon" href="/assets/favicon.png" />
+  <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
   <div class="page-shell">
     <nav class="utility-nav" aria-label="Utility navigation">
-      <a href="./terms.html">TERMS OF SERVICE</a>
+      <a href="/terms">TERMS OF SERVICE</a>
       <span aria-hidden="true"> | </span>
-      <a href="./privacy.html">PRIVACY POLICY</a>
+      <a href="/privacy">PRIVACY POLICY</a>
       <span aria-hidden="true"> | </span>
-      <a href="./site-map.html">SITE MAP</a>
+      <a href="/site-map">SITE MAP</a>
       <span aria-hidden="true"> | </span>
-      <a href="./contact.html">CONTACT US</a>
+      <a href="/contact">CONTACT US</a>
       <span aria-hidden="true"> | </span>
-      <a href="./contact.html?mode=misconduct">REPORT MISCONDUCT</a>
+      <a href="/contact?mode=misconduct">REPORT MISCONDUCT</a>
       <span aria-hidden="true"> | </span>
-      <a href="./employee.html" onclick="handleSignOut(event)" style="color: #9E2A2B;">SIGN OUT</a>
+      <a href="/employee" onclick="handleSignOut(event)" style="color: #9E2A2B;">SIGN OUT</a>
     </nav>
 
     <header class="masthead">
-      <a href="./index.html" class="masthead-identity">
-        <img src="./assets/logo.png" alt="Westpoint Security" width="78" height="78" class="masthead-logo" />
+      <a href="/" class="masthead-identity">
+        <img src="/assets/logo.png" alt="Westpoint Security" width="78" height="78" class="masthead-logo" />
         <div class="corporate-identity">
           <span class="corporate-name">Westpoint Security</span>
           <span class="corporate-branch">Harrison Branch</span>
@@ -39,15 +39,15 @@
     </header>
 
     <nav class="primary-nav" aria-label="Primary navigation">
-      <a href="./index.html">HOME</a>
-      <a href="./about.html">ABOUT WESTPOINT</a>
-      <a href="./services.html">SERVICES</a>
-      <a href="./service-area.html">SERVICE AREA</a>
-      <a href="./careers.html">CAREERS</a>
-      <a href="./newsroom.html">NEWSROOM</a>
-      <a href="./contact.html">CONTACT &amp; REPORTS</a>
-      <a href="./employee.html" class="is-active">OFFICER WORKBENCH</a>
-      <a href="./employee.html" onclick="handleSignOut(event)">SIGN OUT</a>
+      <a href="/">HOME</a>
+      <a href="/about">ABOUT WESTPOINT</a>
+      <a href="/services">SERVICES</a>
+      <a href="/service-area">SERVICE AREA</a>
+      <a href="/careers">CAREERS</a>
+      <a href="/newsroom">NEWSROOM</a>
+      <a href="/contact">CONTACT &amp; REPORTS</a>
+      <a href="/employee" class="is-active">OFFICER WORKBENCH</a>
+      <a href="/employee" onclick="handleSignOut(event)">SIGN OUT</a>
     </nav>
 
     <main class="main-layout" id="main-content" tabindex="-1">
@@ -55,7 +55,7 @@
         <!-- Officer Identity Header -->
         <section class="home-lead" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; margin-bottom: 12px;">
           <div style="display: flex; align-items: center; gap: 14px;">
-            <img id="officerAvatar" src="./assets/logo.png" alt="Avatar" width="58" height="58" style="border: 2px solid #9E2A2B; border-radius: 4px; object-fit: cover; box-shadow: 0 2px 5px rgba(0,0,0,0.2);" />
+            <img id="officerAvatar" src="/assets/logo.png" alt="Avatar" width="58" height="58" style="border: 2px solid #9E2A2B; border-radius: 4px; object-fit: cover; box-shadow: 0 2px 5px rgba(0,0,0,0.2);" />
             <div>
               <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 2px;">
                 <span id="officerBadgeRole" class="tier-badge tier-badge-command">OFFICER</span>
@@ -66,7 +66,7 @@
           </div>
           <div style="display: flex; gap: 8px; align-items: center;">
             <span id="officerDutyPill" class="status-pill status-pill-yellow">OFF DUTY</span>
-            <a href="./employee.html" onclick="handleSignOut(event)" class="period-button period-button-secondary">[ SIGN OUT ]</a>
+            <a href="/employee" onclick="handleSignOut(event)" class="period-button period-button-secondary">[ SIGN OUT ]</a>
           </div>
         </section>
 
@@ -453,8 +453,7 @@
 
     function handleSignOut(e) {
       if (e) e.preventDefault();
-      localStorage.removeItem('wp_officer_session');
-      window.location.href = './employee.html';
+      window.location.href = '/api/auth/logout';
     }
 
     // Switch Tabs
@@ -488,29 +487,23 @@
     // Load Officer Session
     async function loadOfficerSession() {
       try {
+        // The wp_session cookie (HttpOnly, set only by the real server-side
+        // /auth/discord/callback exchange) is the only source of identity
+        // here - a client-writable session would let anyone spoof their own
+        // rank badge and reveal admin tabs just by setting a localStorage key.
         let data = null;
-
-        // 1. Read localStorage session (Works instantly on Railway, GitHub Pages, and Custom Domains)
-        const local = localStorage.getItem('wp_officer_session');
-        if (local) {
-          try { data = JSON.parse(local); } catch (e) {}
-        }
-
-        // 2. If no local session and running with backend API, query /api/auth/me
-        if (!data) {
-          try {
-            const res = await fetch('/api/auth/me');
-            if (res.ok) {
-              const apiData = await res.json();
-              if (apiData && apiData.authenticated) {
-                data = apiData;
-              }
+        try {
+          const res = await fetch('/api/auth/me');
+          if (res.ok) {
+            const apiData = await res.json();
+            if (apiData && apiData.authenticated) {
+              data = apiData;
             }
-          } catch (e) {}
-        }
+          }
+        } catch (e) {}
 
-        if (!data || !data.id) {
-          window.location.href = './employee.html';
+        if (!data || !data.id || !data.permissions?.isOfficer) {
+          window.location.href = '/employee';
           return;
         }
 

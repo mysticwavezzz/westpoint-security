@@ -7,11 +7,18 @@ const querystring = require('querystring');
 const crypto = require('crypto');
 
 const BASE_DIR = __dirname;
-const VIEWS_DIR = path.join(BASE_DIR, 'views');
-const PUBLIC_DIR = path.join(BASE_DIR, 'public');
+// Falls back to BASE_DIR itself so the same server.js works both in the source
+// layout (views/, public/ subfolders) and in a flattened deploy (dist/) where
+// pages and assets sit directly at the root.
+const VIEWS_DIR = fs.existsSync(path.join(BASE_DIR, 'views')) ? path.join(BASE_DIR, 'views') : BASE_DIR;
+const PUBLIC_DIR = fs.existsSync(path.join(BASE_DIR, 'public')) ? path.join(BASE_DIR, 'public') : BASE_DIR;
 const DATA_DIR = path.join(BASE_DIR, 'data');
-const robloxService = require('C:/Users/Nolan/Documents/antigravity/resilient-meitner/src/services/robloxService.js');
-const BOT_DB_PATH = 'C:/Users/Nolan/Documents/antigravity/resilient-meitner/bot.db';
+const robloxService = require('./lib/robloxService.js');
+// Shared with the Discord bot (resilient-meitner). That bot currently only
+// runs on this machine, so this only resolves where the bot's SQLite file is
+// actually reachable on disk — override with BOT_DB_PATH in .env for any
+// other host (e.g. if the bot and portal are later deployed to the same box).
+const BOT_DB_PATH = process.env.BOT_DB_PATH || 'C:/Users/Nolan/Documents/antigravity/resilient-meitner/bot.db';
 
 // Simple .env Loader
 function loadEnv() {
@@ -37,7 +44,20 @@ const DISCORD_CLIENT_ID = process.env.CLIENT_ID || '1540023346794856540';
 const DISCORD_CLIENT_SECRET = process.env.CLIENT_SECRET;
 const GUILD_ID = process.env.GUILD_ID || '1522793078199419022';
 const DEPT_LOGS_CHANNEL_ID = process.env.DEPARTMENT_LOGS_CHANNEL_ID || '1542980017472929944';
-const REDIRECT_URI = `http://localhost:${PORT}/auth/discord/callback`;
+
+// Discord validates redirect_uri against exactly what's registered in the app's
+// developer portal, so it must match the domain the request actually arrived
+// on (custom domain, Railway subdomain, or localhost during dev) rather than
+// a single hardcoded value. PUBLIC_URL in .env overrides this when the Host
+// header can't be trusted (e.g. behind a proxy that doesn't forward it).
+function getRedirectUri(req) {
+  if (process.env.PUBLIC_URL) {
+    return `${process.env.PUBLIC_URL.replace(/\/+$/, '')}/auth/discord/callback`;
+  }
+  const proto = req.headers['x-forwarded-proto'] || (req.connection.encrypted ? 'https' : 'http');
+  const host = req.headers['x-forwarded-host'] || req.headers.host || `localhost:${PORT}`;
+  return `${proto}://${host}/auth/discord/callback`;
+}
 
 if (!DISCORD_BOT_TOKEN || !DISCORD_CLIENT_SECRET) {
   console.warn('[SECURITY WARNING] DISCORD_TOKEN or CLIENT_SECRET is not configured in environment!');
@@ -195,7 +215,7 @@ let botDbInstance = null;
 function getBotDb() {
   if (botDbInstance) return botDbInstance;
   try {
-    const Database = require('C:/Users/Nolan/Documents/antigravity/resilient-meitner/node_modules/better-sqlite3');
+    const Database = require('better-sqlite3');
     if (fs.existsSync(BOT_DB_PATH)) {
       botDbInstance = new Database(BOT_DB_PATH, { timeout: 5000 });
       return botDbInstance;
@@ -293,19 +313,22 @@ function writeJSONFile(filename, data) {
 }
 
 function computePermissions(roles = []) {
+  const isOfficer = roles.length > 0;
   const isCommand = roles.some(r => ['Security Chief', 'Security Deputy Chief', 'Captain', 'Command'].includes(r));
   const isSupervisor = isCommand || roles.some(r => ['Lieutenant', 'Sergeant', 'Supervisor'].includes(r));
   const isIA = isCommand || roles.includes('Internal Affairs');
-  const isOfficer = true;
 
-  let tier = 1;
-  let tierLabel = 'Field Officer';
+  let tier = 0;
+  let tierLabel = 'Verified Citizen';
   if (isCommand) {
     tier = 3;
     tierLabel = 'High Command';
   } else if (isSupervisor) {
     tier = 2;
     tierLabel = 'Field Supervisor';
+  } else if (isOfficer) {
+    tier = 1;
+    tierLabel = 'Field Officer';
   }
 
   return {
@@ -408,11 +431,61 @@ function fetchGuildMember(discordUserId) {
   });
 }
 
+const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000; // matches the wp_session cookie's Max-Age
+const ROLE_RECHECK_INTERVAL_MS = 10 * 60 * 1000;
+
+// Called on every request that carries a session. Two jobs: expire sessions
+// past their 24h TTL (previously only checked once, at process start, so a
+// stolen cookie stayed valid indefinitely for as long as the server kept
+// running), and periodically re-fetch guild roles so a demoted or removed
+// officer loses elevated access within minutes instead of up to 24h.
+async function revalidateSession(sessionId, session) {
+  const loginTimeMs = session.loginTime ? new Date(session.loginTime).getTime() : 0;
+  if (!loginTimeMs || (Date.now() - loginTimeMs) > SESSION_MAX_AGE_MS) {
+    SESSIONS.delete(sessionId);
+    persistSessions();
+    return null;
+  }
+
+  if (session.permissions?.isOfficer) {
+    const lastCheckMs = session.lastRoleCheck ? new Date(session.lastRoleCheck).getTime() : 0;
+    if ((Date.now() - lastCheckMs) > ROLE_RECHECK_INTERVAL_MS) {
+      try {
+        const memRes = await fetchGuildMember(session.id);
+        if (memRes.success && memRes.member) {
+          const matchingRanks = (memRes.member.roles || []).map(r => OFFICER_ROLES[r]).filter(Boolean);
+          matchingRanks.sort((a, b) => {
+            const ia = RANK_PRIORITY.indexOf(a);
+            const ib = RANK_PRIORITY.indexOf(b);
+            return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+          });
+          session.roles = matchingRanks;
+          session.highestRank = matchingRanks[0] || null;
+          session.permissions = computePermissions(matchingRanks);
+        }
+        // On lookup failure (rate limit, network blip) keep the cached
+        // permissions rather than punishing the user for a Discord hiccup.
+      } catch (e) {}
+      session.lastRoleCheck = new Date().toISOString();
+      SESSIONS.set(sessionId, session);
+      persistSessions();
+    }
+  }
+
+  return session;
+}
+
 const server = http.createServer(async (req, res) => {
   try {
-    // Extract client IP address (supporting reverse proxies like Railway/Cloudflare)
+    // Extract client IP address (supporting reverse proxies like Railway/Cloudflare).
+    // The LAST hop is the one appended by our own trusted proxy on the direct
+    // connection it received — the client can freely forge everything earlier
+    // in the chain, so trusting the first hop (as before) let anyone bypass
+    // rate limiting just by sending their own X-Forwarded-For header.
     const forwarded = req.headers['x-forwarded-for'];
-    const clientIp = forwarded ? forwarded.split(',')[0].trim() : (req.socket.remoteAddress || '127.0.0.1');
+    const clientIp = forwarded
+      ? forwarded.split(',').map(s => s.trim()).filter(Boolean).pop()
+      : (req.socket.remoteAddress || '127.0.0.1');
 
     const parsedUrl = url.parse(req.url, true);
     let pathname = parsedUrl.pathname;
@@ -448,10 +521,13 @@ const server = http.createServer(async (req, res) => {
         }
       } catch(e) {}
     }
+    if (currentSession) {
+      currentSession = await revalidateSession(sessionId, currentSession);
+    }
 
   // 1. DISCORD OAUTH2 REDIRECT
   if (pathname === '/auth/discord') {
-    const discordAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${DISCORD_CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=identify`;
+    const discordAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${DISCORD_CLIENT_ID}&redirect_uri=${encodeURIComponent(getRedirectUri(req))}&response_type=code&scope=identify`;
     res.writeHead(302, { 'Location': discordAuthUrl });
     return res.end();
   }
@@ -469,7 +545,7 @@ const server = http.createServer(async (req, res) => {
       client_secret: DISCORD_CLIENT_SECRET,
       grant_type: 'authorization_code',
       code: code,
-      redirect_uri: REDIRECT_URI
+      redirect_uri: getRedirectUri(req)
     });
 
     const tokenReq = https.request({
@@ -499,41 +575,46 @@ const server = http.createServer(async (req, res) => {
                 try {
                   const userObj = JSON.parse(uData);
                   const memRes = await fetchGuildMember(userObj.id);
-                  if (memRes.success && memRes.member) {
-                    const member = memRes.member;
-                    const matchingRanks = (member.roles || []).map(r => OFFICER_ROLES[r]).filter(Boolean);
+                  const member = (memRes.success && memRes.member) ? memRes.member : null;
+                  const matchingRanks = member
+                    ? (member.roles || []).map(r => OFFICER_ROLES[r]).filter(Boolean)
+                    : [];
+                  matchingRanks.sort((a, b) => {
+                    const ia = RANK_PRIORITY.indexOf(a);
+                    const ib = RANK_PRIORITY.indexOf(b);
+                    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+                  });
 
-                    if (matchingRanks.length > 0) {
-                      matchingRanks.sort((a, b) => {
-                        const ia = RANK_PRIORITY.indexOf(a);
-                        const ib = RANK_PRIORITY.indexOf(b);
-                        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
-                      });
-                      const perms = computePermissions(matchingRanks);
-                      // Cryptographically strong 256-bit entropy session token
-                      const newSessionId = 'WP-' + crypto.randomBytes(32).toString('hex');
-                      SESSIONS.set(newSessionId, {
-                        id: userObj.id,
-                        username: userObj.username,
-                        displayName: member.nick || userObj.global_name || userObj.username,
-                        avatar: userObj.avatar ? `https://cdn.discordapp.com/avatars/${userObj.id}/${userObj.avatar}.png` : '/assets/logo.png',
-                        roles: matchingRanks,
-                        highestRank: matchingRanks[0] || 'Security Officer',
-                        permissions: perms,
-                        loginTime: new Date().toISOString()
-                      });
-                      persistSessions();
+                  // Any verified Discord identity gets a real session, whether
+                  // or not they hold a staff role in the guild — matchingRanks
+                  // being empty just means computePermissions gives them the
+                  // "Verified Citizen" tier (isOfficer: false) instead of a
+                  // staff tier. This is what lets the public contact/report
+                  // desk actually work: it used to require an officer role to
+                  // get a session at all, so a real citizen could never
+                  // successfully submit a misconduct report or commendation.
+                  const perms = computePermissions(matchingRanks);
+                  // Cryptographically strong 256-bit entropy session token
+                  const newSessionId = 'WP-' + crypto.randomBytes(32).toString('hex');
+                  SESSIONS.set(newSessionId, {
+                    id: userObj.id,
+                    username: userObj.username,
+                    displayName: (member && member.nick) || userObj.global_name || userObj.username,
+                    avatar: userObj.avatar ? `https://cdn.discordapp.com/avatars/${userObj.id}/${userObj.avatar}.png` : '/assets/logo.png',
+                    roles: matchingRanks,
+                    highestRank: matchingRanks[0] || null,
+                    permissions: perms,
+                    loginTime: new Date().toISOString(),
+                    lastRoleCheck: new Date().toISOString()
+                  });
+                  persistSessions();
 
-                      const isHttps = (req.headers['x-forwarded-proto'] === 'https') || req.connection.encrypted;
-                      res.writeHead(302, {
-                        'Set-Cookie': `wp_session=${newSessionId}; Path=/; Max-Age=86400; SameSite=Lax; HttpOnly${isHttps ? '; Secure' : ''}`,
-                        'Location': '/employee/dashboard',
-                        ...SECURITY_HEADERS
-                      });
-                      return res.end();
-                    }
-                  }
-                  res.writeHead(302, { 'Location': '/employee?error=unauthorized_role', ...SECURITY_HEADERS });
+                  const isHttps = (req.headers['x-forwarded-proto'] === 'https') || req.connection.encrypted;
+                  res.writeHead(302, {
+                    'Set-Cookie': `wp_session=${newSessionId}; Path=/; Max-Age=86400; SameSite=Lax; HttpOnly${isHttps ? '; Secure' : ''}`,
+                    'Location': perms.isOfficer ? '/employee/dashboard' : '/contact',
+                    ...SECURITY_HEADERS
+                  });
                   return res.end();
                 } catch(e) {
                   res.writeHead(302, { 'Location': '/employee?error=profile_error', ...SECURITY_HEADERS });
@@ -581,7 +662,7 @@ const server = http.createServer(async (req, res) => {
 
   // 5. API: GET /api/duty-roster (Real-time in-game autolog sessions & weekly stats from bot.db)
   if (pathname === '/api/duty-roster') {
-    if (!currentSession) return sendJSON(res, 401, { error: 'Unauthorized' });
+    if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
     const db = getBotDb();
     const activeSessions = [];
     const leaderboard = [];
@@ -636,7 +717,7 @@ const server = http.createServer(async (req, res) => {
 
   // 6. API: GET /api/officer/incidents
   if (pathname === '/api/officer/incidents' && req.method === 'GET') {
-    if (!currentSession) return sendJSON(res, 401, { error: 'Unauthorized' });
+    if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
     const allIncidents = readJSONFile('incidents.json', []);
     const isSup = currentSession.permissions.isSupervisor;
     const filtered = isSup ? allIncidents : allIncidents.filter(inc => inc.officerId === currentSession.id);
@@ -645,7 +726,7 @@ const server = http.createServer(async (req, res) => {
 
   // 7. API: POST /api/officer/incident
   if (pathname === '/api/officer/incident' && req.method === 'POST') {
-    if (!currentSession) return sendJSON(res, 401, { error: 'Unauthorized' });
+    if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
     const body = await parseBody(req);
     const incident = {
       id: 'INC-' + Math.floor(100000 + Math.random() * 900000),
@@ -702,6 +783,11 @@ const server = http.createServer(async (req, res) => {
 
   // 8B. API: POST /api/contact/staff (Reach Out to Staff Form)
   if (pathname === '/api/contact/staff' && req.method === 'POST') {
+    if (!currentSession) {
+      return sendJSON(res, 401, {
+        error: 'Authentication Required: You must be signed in with Discord to send a message to staff.'
+      });
+    }
     const body = await parseBody(req);
     const senderName = String(body.senderName || 'Anonymous Citizen').trim().slice(0, 100);
     const contactHandle = String(body.contactHandle || 'Unspecified').trim().slice(0, 100);
@@ -776,11 +862,12 @@ const server = http.createServer(async (req, res) => {
     }
     const body = await parseBody(req);
     const actionType = (body.type || 'custom').toLowerCase();
-    const targetUser = body.targetUser || 'Staff Member';
-    const targetUserId = body.targetUserId || '';
-    const roleRank = body.roleRank || '';
-    const context = body.context || '';
-    const notes = body.notes || '';
+    const targetUser = String(body.targetUser || 'Staff Member').trim().slice(0, 100);
+    const targetUserId = String(body.targetUserId || '').trim().slice(0, 32);
+    const roleRank = String(body.roleRank || '').trim().slice(0, 100);
+    const context = String(body.context || '').trim().slice(0, 200);
+    // Discord embed field values cap at 1024 chars; leave headroom for the "Notes" label wrapper.
+    const notes = String(body.notes || '').trim().slice(0, 1000);
     const executor = currentSession.displayName;
     const color = ACTION_COLORS[actionType] || ACTION_COLORS.custom;
 
@@ -917,7 +1004,7 @@ const server = http.createServer(async (req, res) => {
 
   // API: GET /api/duty/status (Check current officer active session in bot.db)
   if (pathname === '/api/duty/status' && req.method === 'GET') {
-    if (!currentSession) return sendJSON(res, 401, { error: 'Unauthorized' });
+    if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
     const db = getBotDb();
     if (db) {
       try {
@@ -941,7 +1028,7 @@ const server = http.createServer(async (req, res) => {
 
   // API: POST /api/duty/start (Verify Roblox In-Game Presence before starting shift)
   if (pathname === '/api/duty/start' && req.method === 'POST') {
-    if (!currentSession) return sendJSON(res, 401, { error: 'Unauthorized' });
+    if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
     const db = getBotDb();
     if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
 
@@ -1010,7 +1097,7 @@ const server = http.createServer(async (req, res) => {
 
   // API: POST /api/duty/end (End duty shift, update weekly totals, post Discord embed)
   if (pathname === '/api/duty/end' && req.method === 'POST') {
-    if (!currentSession) return sendJSON(res, 401, { error: 'Unauthorized' });
+    if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
     const db = getBotDb();
     if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
 
@@ -1071,7 +1158,7 @@ const server = http.createServer(async (req, res) => {
 
   // 16. Protected Employee Dashboard Route
   if (pathname === '/employee/dashboard') {
-    if (!currentSession) {
+    if (!currentSession || !currentSession.permissions.isOfficer) {
       res.writeHead(302, { 'Location': '/employee', ...SECURITY_HEADERS });
       return res.end();
     }
@@ -1088,8 +1175,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   // 17. Static Page Views
-  // Auto-redirect to dashboard if already authenticated
-  if (pathname === '/employee' && currentSession) {
+  // Auto-redirect to dashboard if already authenticated as staff
+  if (pathname === '/employee' && currentSession && currentSession.permissions.isOfficer) {
     res.writeHead(302, { 'Location': '/employee/dashboard', ...SECURITY_HEADERS });
     return res.end();
   }
@@ -1108,8 +1195,9 @@ const server = http.createServer(async (req, res) => {
   }
 
   // 18. Static Public Assets
-  let publicPath = path.join(PUBLIC_DIR, pathname);
-  if (fs.existsSync(publicPath) && fs.statSync(publicPath).isFile()) {
+  const publicPath = path.resolve(PUBLIC_DIR, '.' + pathname);
+  const isInsidePublicDir = publicPath === PUBLIC_DIR || publicPath.startsWith(PUBLIC_DIR + path.sep);
+  if (isInsidePublicDir && fs.existsSync(publicPath) && fs.statSync(publicPath).isFile()) {
     const ext = path.extname(publicPath);
     const mime = MIME_TYPES[ext] || 'application/octet-stream';
     fs.readFile(publicPath, (err, data) => {
