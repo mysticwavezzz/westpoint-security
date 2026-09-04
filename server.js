@@ -148,38 +148,92 @@ function persistSessions() {
   }
 }
 
-// Officer Ranks in Guild 1522793078199419022
-const RANK_PRIORITY = [
-  'Security Chief',
-  'Security Deputy Chief',
-  'Captain',
-  'Lieutenant',
-  'Sergeant',
-  'Corporal',
-  'Senior Security Officer',
-  'Security Officer',
-  'Probationary Security Officer',
-  'Internal Affairs',
-  'Command',
-  'Supervisor',
-  'Westpoint Security'
-];
-
-const OFFICER_ROLES = {
-  '1522793591112466493': 'Security Chief',
-  '1522793595315294248': 'Security Deputy Chief',
-  '1522793598633119754': 'Captain',
-  '1522793602449670204': 'Lieutenant',
-  '1522793605683613877': 'Sergeant',
-  '1522793608988721252': 'Corporal',
-  '1522793612394627162': 'Senior Security Officer',
-  '1522793615884161126': 'Security Officer',
-  '1522793618908381286': 'Probationary Security Officer',
-  '1522798272144605315': 'Command',
-  '1522798280000405625': 'Supervisor',
-  '1522798554580783124': 'Internal Affairs',
-  '1544515568563126303': 'Westpoint Security'
+// Which Discord roles in the guild grant staff access, and what each one
+// unlocks, used to be hardcoded here and only changeable by editing this
+// file and redeploying. It's now data - stored in role-permissions.json
+// (DATA_DIR, so it lives on the same persistent Volume as everything else)
+// and editable from the Command Center's Role Permissions panel. These are
+// only the seed values used the first time that file doesn't exist yet, so
+// a fresh deploy behaves exactly as it always did until Command edits
+// something - after that, this constant is never read again.
+const LEGACY_ROLE_SEED = {
+  '1522793591112466493': { displayName: 'Security Chief', isCommand: true },
+  '1522793595315294248': { displayName: 'Security Deputy Chief', isCommand: true },
+  '1522793598633119754': { displayName: 'Captain', isCommand: true },
+  '1522793602449670204': { displayName: 'Lieutenant', isSupervisor: true },
+  '1522793605683613877': { displayName: 'Sergeant', isSupervisor: true },
+  '1522793608988721252': { displayName: 'Corporal' },
+  '1522793612394627162': { displayName: 'Senior Security Officer' },
+  '1522793615884161126': { displayName: 'Security Officer' },
+  '1522793618908381286': { displayName: 'Probationary Security Officer' },
+  '1522798272144605315': { displayName: 'Command', isCommand: true },
+  '1522798280000405625': { displayName: 'Supervisor', isSupervisor: true },
+  '1522798554580783124': { displayName: 'Internal Affairs', isInternalAffairs: true },
+  '1544515568563126303': { displayName: 'Westpoint Security' }
 };
+
+let roleConfigCache = null;
+function getRoleConfig() {
+  if (roleConfigCache) return roleConfigCache;
+  const existing = readJSONFile('role-permissions.json', null);
+  if (existing) {
+    roleConfigCache = existing;
+    return existing;
+  }
+  const seeded = {};
+  Object.entries(LEGACY_ROLE_SEED).forEach(([id, cfg], index) => {
+    seeded[id] = {
+      displayName: cfg.displayName,
+      position: 1000 - index, // arbitrary but stable ordering until a real Discord position is saved over it
+      enabled: true,
+      isSupervisor: !!cfg.isSupervisor || !!cfg.isCommand,
+      isCommand: !!cfg.isCommand,
+      isInternalAffairs: !!cfg.isInternalAffairs || !!cfg.isCommand
+    };
+  });
+  writeJSONFile('role-permissions.json', seeded);
+  roleConfigCache = seeded;
+  return seeded;
+}
+
+// Given the raw Discord role IDs a guild member holds, looks each one up in
+// the (admin-editable) role config and derives what they're allowed to do.
+// isOfficer just means "holds at least one enabled staff role" - the other
+// flags are independent (a role can grant Supervisor without Command, etc.),
+// matching how multiple roles combine for a real member.
+function computePermissionsFromDiscordRoles(discordRoleIds) {
+  const config = getRoleConfig();
+  const matched = (discordRoleIds || []).map(id => config[id]).filter(r => r && r.enabled);
+
+  const isOfficer = matched.length > 0;
+  const isCommand = matched.some(r => r.isCommand);
+  const isSupervisor = isCommand || matched.some(r => r.isSupervisor);
+  const isInternalAffairs = isCommand || matched.some(r => r.isInternalAffairs);
+
+  let tier = 0;
+  let tierLabel = 'Verified Citizen';
+  if (isCommand) {
+    tier = 3;
+    tierLabel = 'High Command';
+  } else if (isSupervisor) {
+    tier = 2;
+    tierLabel = 'Field Supervisor';
+  } else if (isOfficer) {
+    tier = 1;
+    tierLabel = 'Field Officer';
+  }
+
+  const roleNames = matched
+    .slice()
+    .sort((a, b) => (b.position || 0) - (a.position || 0))
+    .map(r => r.displayName);
+
+  return {
+    permissions: { isOfficer, isSupervisor, isCommand, isInternalAffairs, tier, tierLabel },
+    roles: roleNames,
+    highestRank: roleNames[0] || null
+  };
+}
 
 const ACTION_COLORS = {
   hire: 0x2ECC71,
@@ -418,35 +472,6 @@ function writeJSONFile(filename, data) {
   }
 }
 
-function computePermissions(roles = []) {
-  const isOfficer = roles.length > 0;
-  const isCommand = roles.some(r => ['Security Chief', 'Security Deputy Chief', 'Captain', 'Command'].includes(r));
-  const isSupervisor = isCommand || roles.some(r => ['Lieutenant', 'Sergeant', 'Supervisor'].includes(r));
-  const isIA = isCommand || roles.includes('Internal Affairs');
-
-  let tier = 0;
-  let tierLabel = 'Verified Citizen';
-  if (isCommand) {
-    tier = 3;
-    tierLabel = 'High Command';
-  } else if (isSupervisor) {
-    tier = 2;
-    tierLabel = 'Field Supervisor';
-  } else if (isOfficer) {
-    tier = 1;
-    tierLabel = 'Field Officer';
-  }
-
-  return {
-    isOfficer,
-    isSupervisor,
-    isCommand,
-    isInternalAffairs: isIA,
-    tier,
-    tierLabel
-  };
-}
-
 function formatDuration(totalSeconds) {
   if (!totalSeconds || isNaN(totalSeconds) || totalSeconds <= 0) return '0s';
   const hours = Math.floor(totalSeconds / 3600);
@@ -537,6 +562,41 @@ function fetchGuildMember(discordUserId) {
   });
 }
 
+// Fetch every role in the guild via Bot Token, for the Command Center's
+// Role Permissions panel to list and edit.
+function fetchGuildRoles() {
+  return new Promise((resolve) => {
+    const options = {
+      hostname: 'discord.com',
+      path: `/api/v10/guilds/${GUILD_ID}/roles`,
+      method: 'GET',
+      headers: {
+        'Authorization': `Bot ${DISCORD_BOT_TOKEN}`,
+        'User-Agent': 'WestpointPortal/1.0'
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          if (res.statusCode === 200) {
+            resolve({ success: true, roles: JSON.parse(data) });
+          } else {
+            resolve({ success: false, status: res.statusCode, error: data });
+          }
+        } catch (e) {
+          resolve({ success: false, error: e.message });
+        }
+      });
+    });
+
+    req.on('error', (err) => resolve({ success: false, error: err.message }));
+    req.end();
+  });
+}
+
 const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000; // matches the wp_session cookie's Max-Age
 const ROLE_RECHECK_INTERVAL_MS = 10 * 60 * 1000;
 
@@ -559,15 +619,10 @@ async function revalidateSession(sessionId, session) {
       try {
         const memRes = await fetchGuildMember(session.id);
         if (memRes.success && memRes.member) {
-          const matchingRanks = (memRes.member.roles || []).map(r => OFFICER_ROLES[r]).filter(Boolean);
-          matchingRanks.sort((a, b) => {
-            const ia = RANK_PRIORITY.indexOf(a);
-            const ib = RANK_PRIORITY.indexOf(b);
-            return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
-          });
-          session.roles = matchingRanks;
-          session.highestRank = matchingRanks[0] || null;
-          session.permissions = computePermissions(matchingRanks);
+          const { permissions, roles, highestRank } = computePermissionsFromDiscordRoles(memRes.member.roles || []);
+          session.roles = roles;
+          session.highestRank = highestRank;
+          session.permissions = permissions;
         }
         // On lookup failure (rate limit, network blip) keep the cached
         // permissions rather than punishing the user for a Discord hiccup.
@@ -794,24 +849,18 @@ const server = http.createServer(async (req, res) => {
                   const userObj = JSON.parse(uData);
                   const memRes = await fetchGuildMember(userObj.id);
                   const member = (memRes.success && memRes.member) ? memRes.member : null;
-                  const matchingRanks = member
-                    ? (member.roles || []).map(r => OFFICER_ROLES[r]).filter(Boolean)
-                    : [];
-                  matchingRanks.sort((a, b) => {
-                    const ia = RANK_PRIORITY.indexOf(a);
-                    const ib = RANK_PRIORITY.indexOf(b);
-                    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
-                  });
 
                   // Any verified Discord identity gets a real session, whether
-                  // or not they hold a staff role in the guild — matchingRanks
-                  // being empty just means computePermissions gives them the
-                  // "Verified Citizen" tier (isOfficer: false) instead of a
-                  // staff tier. This is what lets the public contact/report
-                  // desk actually work: it used to require an officer role to
-                  // get a session at all, so a real citizen could never
-                  // successfully submit a misconduct report or commendation.
-                  const perms = computePermissions(matchingRanks);
+                  // or not they hold a staff role in the guild — holding no
+                  // enabled role just means computePermissionsFromDiscordRoles
+                  // gives them the "Verified Citizen" tier (isOfficer: false)
+                  // instead of a staff tier. This is what lets the public
+                  // contact/report desk actually work: it used to require an
+                  // officer role to get a session at all, so a real citizen
+                  // could never successfully submit a misconduct report or
+                  // commendation.
+                  const { permissions: perms, roles: matchingRanks, highestRank } =
+                    computePermissionsFromDiscordRoles(member ? (member.roles || []) : []);
                   // Cryptographically strong 256-bit entropy session token
                   const newSessionId = 'WP-' + crypto.randomBytes(32).toString('hex');
                   SESSIONS.set(newSessionId, {
@@ -820,7 +869,7 @@ const server = http.createServer(async (req, res) => {
                     displayName: (member && member.nick) || userObj.global_name || userObj.username,
                     avatar: userObj.avatar ? `https://cdn.discordapp.com/avatars/${userObj.id}/${userObj.avatar}.png` : '/assets/logo.png',
                     roles: matchingRanks,
-                    highestRank: matchingRanks[0] || null,
+                    highestRank: highestRank,
                     permissions: perms,
                     loginTime: new Date().toISOString(),
                     lastRoleCheck: new Date().toISOString()
@@ -1250,6 +1299,63 @@ const server = http.createServer(async (req, res) => {
       console.error('[QUOTA RESET ERROR]', e.message);
       return sendJSON(res, 500, { error: 'Failed to reset quota logs' });
     }
+  }
+
+  // API: GET /api/admin/roles (Command Only - list every guild role, live
+  // from Discord, merged with the saved enabled/tier config for each)
+  if (pathname === '/api/admin/roles' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    const liveRes = await fetchGuildRoles();
+    if (!liveRes.success) {
+      return sendJSON(res, 502, { error: 'Failed to fetch roles from Discord: ' + (liveRes.error || liveRes.status) });
+    }
+    const config = getRoleConfig();
+    const roles = liveRes.roles
+      .filter(r => r.id !== GUILD_ID && !r.managed) // @everyone and bot/integration-managed roles can't be assigned to staff manually
+      .map(r => {
+        const c = config[r.id] || {};
+        return {
+          id: r.id,
+          name: r.name,
+          color: r.color ? '#' + r.color.toString(16).padStart(6, '0') : null,
+          position: r.position,
+          enabled: !!c.enabled,
+          isSupervisor: !!c.isSupervisor,
+          isCommand: !!c.isCommand,
+          isInternalAffairs: !!c.isInternalAffairs
+        };
+      })
+      .sort((a, b) => b.position - a.position);
+    return sendJSON(res, 200, { roles });
+  }
+
+  // API: POST /api/admin/roles (Command Only - save the full edited role
+  // config. Replaces the whole file rather than merging, since the client
+  // always has the complete current list from the GET above.)
+  if (pathname === '/api/admin/roles' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    const body = await parseBody(req);
+    if (!Array.isArray(body.roles)) return sendJSON(res, 400, { error: 'Missing roles array' });
+
+    const config = {};
+    body.roles.forEach(r => {
+      if (!r || !r.id) return;
+      config[String(r.id)] = {
+        displayName: String(r.name || 'Role').trim().slice(0, 100),
+        position: Number(r.position) || 0,
+        enabled: !!r.enabled,
+        isSupervisor: !!r.isSupervisor,
+        isCommand: !!r.isCommand,
+        isInternalAffairs: !!r.isInternalAffairs
+      };
+    });
+    writeJSONFile('role-permissions.json', config);
+    roleConfigCache = config;
+    return sendJSON(res, 200, { success: true, roleCount: Object.keys(config).length });
   }
 
   // API: GET /api/duty/status (Check current officer active session in bot.db)

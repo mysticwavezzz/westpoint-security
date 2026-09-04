@@ -397,6 +397,37 @@
             </div>
           </section>
 
+          <!-- Discord Role Permissions -->
+          <section class="content-box" style="margin-bottom: 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <h2>Role Permissions</h2>
+              <button type="button" class="period-button period-button-secondary" style="font-size: 9.5px; padding: 4px 10px;" onclick="loadRolePermissions()">[ REFRESH FROM DISCORD ]</button>
+            </div>
+            <div class="content-box-body">
+              <p style="margin-bottom: 12px; font-size: 11.5px; color: #546675;">
+                Every role in the Discord server, live. <strong>Staff Access</strong> controls whether holding that role gives someone a session on this portal at all - disabled roles are treated the same as having no staff role. The other three are independent (a role can grant Supervisor without Command, etc.) and only matter while Staff Access is on.
+              </p>
+              <div class="period-table-wrap" style="margin-bottom: 10px;">
+                <table class="period-table">
+                  <thead>
+                    <tr>
+                      <th>Discord Role</th>
+                      <th style="text-align: center;">Staff Access</th>
+                      <th style="text-align: center;">Supervisor</th>
+                      <th style="text-align: center;">Command</th>
+                      <th style="text-align: center;">Internal Affairs</th>
+                    </tr>
+                  </thead>
+                  <tbody id="rolePermissionsTableBody">
+                    <tr><td colspan="5" class="table-empty-msg">Loading roles from Discord...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <button type="button" class="period-button" onclick="saveRolePermissions()">[ SAVE ROLE PERMISSIONS ]</button>
+              <div id="rolePermissionsStatus" style="margin-top: 8px; font-weight: bold; font-size: 11px;"></div>
+            </div>
+          </section>
+
           <!-- Quota Data Reset -->
           <section class="content-box" style="margin-bottom: 14px; border-color: #E57373;">
             <h2>Reset Weekly Quota Data</h2>
@@ -551,6 +582,7 @@
       if (tabKey === 'command') {
         document.getElementById('tabBtnCommand')?.classList.add('is-active');
         loadCommandNews();
+        loadRolePermissions();
       }
     }
 
@@ -1638,6 +1670,82 @@
       } catch (e) {
         statusDiv.style.color = '#9E2A2B';
         statusDiv.innerText = 'Network error resetting quota logs.';
+      }
+    }
+
+    // ============== ROLE PERMISSIONS (Command) ==============
+    let rolePermissionsData = [];
+
+    async function loadRolePermissions() {
+      const tbody = document.getElementById('rolePermissionsTableBody');
+      tbody.innerHTML = '<tr><td colspan="5" class="table-empty-msg">Loading roles from Discord...</td></tr>';
+      try {
+        const res = await fetch('/api/admin/roles');
+        const data = await res.json();
+        if (!res.ok) {
+          tbody.innerHTML = '<tr><td colspan="5" class="table-empty-msg">' + escapeHtml(data.error || 'Failed to load roles.') + '</td></tr>';
+          return;
+        }
+        rolePermissionsData = data.roles;
+        if (rolePermissionsData.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" class="table-empty-msg">No assignable roles found in the server.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = rolePermissionsData.map(r => `
+          <tr data-role-id="${escapeHtml(r.id)}">
+            <td>
+              <span style="display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; background: ${r.color || '#99AAB5'}; vertical-align: middle;"></span>
+              <strong>${escapeHtml(r.name)}</strong>
+            </td>
+            <td style="text-align: center;"><input type="checkbox" class="role-perm-enabled" ${r.enabled ? 'checked' : ''} /></td>
+            <td style="text-align: center;"><input type="checkbox" class="role-perm-supervisor" ${r.isSupervisor ? 'checked' : ''} /></td>
+            <td style="text-align: center;"><input type="checkbox" class="role-perm-command" ${r.isCommand ? 'checked' : ''} /></td>
+            <td style="text-align: center;"><input type="checkbox" class="role-perm-ia" ${r.isInternalAffairs ? 'checked' : ''} /></td>
+          </tr>
+        `).join('');
+      } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="5" class="table-empty-msg">Network error loading roles.</td></tr>';
+      }
+    }
+
+    async function saveRolePermissions() {
+      const statusDiv = document.getElementById('rolePermissionsStatus');
+      const rows = document.querySelectorAll('#rolePermissionsTableBody tr[data-role-id]');
+      const byId = new Map(rolePermissionsData.map(r => [r.id, r]));
+
+      const roles = Array.from(rows).map(row => {
+        const id = row.getAttribute('data-role-id');
+        const original = byId.get(id) || {};
+        return {
+          id,
+          name: original.name,
+          position: original.position,
+          enabled: row.querySelector('.role-perm-enabled').checked,
+          isSupervisor: row.querySelector('.role-perm-supervisor').checked,
+          isCommand: row.querySelector('.role-perm-command').checked,
+          isInternalAffairs: row.querySelector('.role-perm-ia').checked
+        };
+      });
+
+      statusDiv.style.color = '#546675';
+      statusDiv.innerText = 'Saving...';
+      try {
+        const res = await fetch('/api/admin/roles', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ roles })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          statusDiv.style.color = 'green';
+          statusDiv.innerText = `Saved - ${data.roleCount} role(s) updated. Officers already signed in pick up changes within 10 minutes, or immediately on their next sign-in.`;
+        } else {
+          statusDiv.style.color = '#9E2A2B';
+          statusDiv.innerText = 'Error: ' + (data.error || 'Failed to save role permissions.');
+        }
+      } catch (e) {
+        statusDiv.style.color = '#9E2A2B';
+        statusDiv.innerText = 'Network error saving role permissions.';
       }
     }
 
