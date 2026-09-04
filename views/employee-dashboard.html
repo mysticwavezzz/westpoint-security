@@ -114,7 +114,7 @@
                   <p id="bodycamNotice" style="margin-top: 8px; font-size: 10.5px; color: #546675; display: none;"></p>
                   <p id="bodycamStorageStatus" style="margin-top: 6px; font-size: 10px; color: #546675; font-family: monospace;"></p>
                   <p style="margin-top: 8px; font-size: 10.5px; color: #546675;">
-                    * When prompted, share the <strong>Roblox window</strong>, not your full screen - the browser's picker is the only thing that can restrict what's shared, so double-check before confirming. Recording saves to the department server, not your PC, and is visible live to Supervisors+ on the Duty Roster tab. Records in short 15-second clips every 30 seconds to keep storage use low, not continuously.
+                    * When prompted, share the <strong>Roblox window</strong>, not your full screen - the browser's picker is the only thing that can restrict what's shared, so double-check before confirming. Recording saves to the department server, not your PC, and is visible live to Supervisors+ on the Duty Roster tab. Records continuously at reduced quality/frame rate to keep storage use low - chat and text stay readable, smooth motion is traded away.
                   </p>
                 </div>
               </div>
@@ -673,55 +673,31 @@
     }
 
     // ============== BODYCAM ==============
-    // Records in 15-second bursts every 30 seconds (not continuously) and at
-    // a capped bitrate, both purely to keep R2 storage/cost down - this is a
-    // periodic-sample bodycam, not a continuous one.
-    const BODYCAM_RECORD_MS = 15000;
-    const BODYCAM_CYCLE_MS = 30000;
-    const BODYCAM_BITRATE = 800000; // ~800kbps - plenty for reviewing a game window, a fraction of default screen-capture bitrate
+    // Continuous recording, no on/off gaps - but tuned hard for size, since
+    // going continuous roughly doubles total data versus the old 50% duty
+    // cycle at the same settings. Compensating with a much lower bitrate,
+    // a capped resolution, and a capped frame rate: text doesn't need
+    // motion smoothness, and fewer frames per second means more bits
+    // available per frame at a given bitrate, which is what actually keeps
+    // small chat text legible when the bitrate is this low. Recorded as
+    // back-to-back segments (each one's completion immediately starts the
+    // next - see recordBodycamSegment) rather than one multi-hour
+    // MediaRecorder session, purely so upload/live-view/finalize don't have
+    // to deal with an unbounded single file; there's no pause between them.
+    const BODYCAM_SEGMENT_MS = 20000; // segment length for upload/live-view chunking only, not a duty cycle
+    const BODYCAM_BITRATE = 300000; // ~300kbps continuous - about 135MB/hour, versus ~1MB/s+ at browser defaults
+    const BODYCAM_MAX_WIDTH = 1280;
+    const BODYCAM_MAX_HEIGHT = 720;
+    const BODYCAM_FRAMERATE = 8;
 
     let bodycamStream = null;
     let bodycamTrack = null;
     let bodycamRecorder = null;
-    let bodycamTimerWorker = null;
+    let bodycamSegmentTimer = null;
     let bodycamId = null;
     let bodycamChunkIndex = 0;
     let bodycamLastUploadPromise = Promise.resolve();
     let bodycamStopping = false;
-
-    // Chrome (and other browsers) throttle setInterval/setTimeout on a main
-    // thread that's hidden - down to roughly once a minute after the page
-    // has been backgrounded for ~5 minutes. That's exactly what happens
-    // here: the officer starts the bodycam, then alt-tabs to actually play
-    // Roblox, backgrounding this tab almost immediately - the first clip
-    // fires before that happens, then the 30s cycle stalls. Worker threads
-    // aren't subject to that page-visibility throttling, so the recording
-    // schedule lives there instead; only the actual MediaRecorder start/stop
-    // calls happen back on the main thread, since a Worker can't touch the
-    // stream or DOM directly.
-    function createBodycamTimerWorker() {
-      const workerSrc = `
-        let cycleTimer = null;
-        let segmentTimer = null;
-        onmessage = (e) => {
-          const msg = e.data;
-          if (msg.cmd === 'start') {
-            postMessage({ type: 'segment' });
-            cycleTimer = setInterval(() => postMessage({ type: 'segment' }), msg.cycleMs);
-          } else if (msg.cmd === 'scheduleStop') {
-            if (segmentTimer) clearTimeout(segmentTimer);
-            segmentTimer = setTimeout(() => postMessage({ type: 'stopSegment' }), msg.delayMs);
-          } else if (msg.cmd === 'stop') {
-            if (cycleTimer) clearInterval(cycleTimer);
-            if (segmentTimer) clearTimeout(segmentTimer);
-          }
-        };
-      `;
-      const blobUrl = URL.createObjectURL(new Blob([workerSrc], { type: 'application/javascript' }));
-      const worker = new Worker(blobUrl);
-      URL.revokeObjectURL(blobUrl);
-      return worker;
-    }
 
     function showBodycamNotice(msg, kind) {
       const el = document.getElementById('bodycamNotice');
@@ -768,8 +744,18 @@
           // displaySurface: 'window' only hints the browser's picker to
           // default to the Window tab - it cannot force or restrict the
           // choice. The officer can still pick "Entire Screen" regardless.
+          // width/height/frameRate are hard caps (not just hints) most
+          // browsers honor for display capture - keeping resolution capped
+          // avoids wasting bits encoding detail the low bitrate can't
+          // preserve anyway, and low frame rate is the main lever that
+          // keeps text sharp at that bitrate.
           stream = await navigator.mediaDevices.getDisplayMedia({
-            video: { displaySurface: 'window' },
+            video: {
+              displaySurface: 'window',
+              width: { ideal: BODYCAM_MAX_WIDTH, max: BODYCAM_MAX_WIDTH },
+              height: { ideal: BODYCAM_MAX_HEIGHT, max: BODYCAM_MAX_HEIGHT },
+              frameRate: { ideal: BODYCAM_FRAMERATE, max: BODYCAM_FRAMERATE }
+            },
             audio: false
           });
         } catch (e) {
@@ -783,7 +769,7 @@
         if (settings.displaySurface && settings.displaySurface !== 'window') {
           showBodycamNotice('Warning: that shared your entire screen, not just the Roblox window. Click Stop Bodycam and restart if that was a mistake.', 'error');
         } else {
-          showBodycamNotice('Bodycam recording started (15s clips every 30s).', 'success');
+          showBodycamNotice('Bodycam recording started (continuous).', 'success');
         }
 
         bodycamStream = stream;
@@ -797,17 +783,7 @@
           if (!bodycamStopping) stopBodycam();
         });
 
-        bodycamTimerWorker = createBodycamTimerWorker();
-        bodycamTimerWorker.onmessage = (e) => {
-          if (e.data.type === 'segment') {
-            recordBodycamSegment();
-          } else if (e.data.type === 'stopSegment') {
-            if (bodycamRecorder && bodycamRecorder.state !== 'inactive') bodycamRecorder.stop();
-            const pillEl = document.getElementById('bodycamStatusPill');
-            if (pillEl && !bodycamStopping) { pillEl.innerText = 'IDLE (next clip soon)'; pillEl.className = 'status-pill status-pill-yellow'; }
-          }
-        };
-        bodycamTimerWorker.postMessage({ cmd: 'start', cycleMs: BODYCAM_CYCLE_MS });
+        recordBodycamSegment();
 
         btnStart.style.display = 'none';
         btnStop.style.display = 'inline-block';
@@ -822,11 +798,15 @@
       }
     }
 
-    // Records one BODYCAM_RECORD_MS-long segment on the already-open stream,
-    // then uploads it as a single chunk once it finishes. Each call is a
-    // fresh MediaRecorder instance (not one continuous recorder with
-    // start/pause), since MediaRecorder has no pause-and-resume-later mode
-    // that leaves gaps - two short recordings capture the same idea cleanly.
+    // Records one BODYCAM_SEGMENT_MS-long piece on the already-open stream,
+    // uploads it, and immediately starts recording the next piece the
+    // moment this one stops - the underlying stream never pauses, so there's
+    // no gap in coverage, just a rolling series of back-to-back files
+    // instead of one unbounded one. This self-chaining shape (each segment's
+    // completion is what starts the next one) is also what makes this
+    // robust against background-tab timer throttling: there's no separate
+    // "wake up and start the next segment" timer that can get stuck while
+    // idle, because there is no idle period between segments.
     function recordBodycamSegment() {
       if (!bodycamStream || bodycamStopping) return;
       const pill = document.getElementById('bodycamStatusPill');
@@ -844,14 +824,17 @@
         if (e.data && e.data.size > 0) localChunks.push(e.data);
       };
       recorder.onstop = () => {
-        if (localChunks.length === 0) return;
-        const blob = new Blob(localChunks, { type: 'video/webm' });
-        uploadBodycamSegment(blob);
+        if (localChunks.length > 0) {
+          uploadBodycamSegment(new Blob(localChunks, { type: 'video/webm' }));
+        }
+        if (!bodycamStopping && bodycamStream) recordBodycamSegment();
       };
 
       recorder.start();
       if (pill) { pill.innerText = '● RECORDING'; pill.className = 'status-pill status-pill-green'; }
-      if (bodycamTimerWorker) bodycamTimerWorker.postMessage({ cmd: 'scheduleStop', delayMs: BODYCAM_RECORD_MS });
+      bodycamSegmentTimer = setTimeout(() => {
+        if (recorder.state !== 'inactive') recorder.stop();
+      }, BODYCAM_SEGMENT_MS);
     }
 
     let bodycamUploadFailureStreak = 0;
@@ -896,11 +879,7 @@
       const idToStop = bodycamId;
       bodycamStopping = true;
 
-      if (bodycamTimerWorker) {
-        bodycamTimerWorker.postMessage({ cmd: 'stop' });
-        bodycamTimerWorker.terminate();
-        bodycamTimerWorker = null;
-      }
+      if (bodycamSegmentTimer) { clearTimeout(bodycamSegmentTimer); bodycamSegmentTimer = null; }
 
       pill.innerText = 'FINALIZING…';
       pill.className = 'status-pill status-pill-yellow';
