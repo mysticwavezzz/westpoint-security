@@ -489,14 +489,14 @@
       let data = null;
       const isStatic = window.location.hostname.includes('github.io') || window.location.protocol === 'file:';
 
-      // 1. On GitHub Pages: Read localStorage session directly
-      if (isStatic) {
-        const local = localStorage.getItem('wp_officer_session');
-        if (local) {
-          try { data = JSON.parse(local); } catch (e) {}
-        }
-      } else {
-        // 2. On Localhost / Node.js backend: Query /api/auth/me
+      // 1. Read localStorage session (Works instantly on Railway, GitHub Pages, and Custom Domains)
+      const local = localStorage.getItem('wp_officer_session');
+      if (local) {
+        try { data = JSON.parse(local); } catch (e) {}
+      }
+
+      // 2. If no local session and running with backend API, query /api/auth/me
+      if (!data) {
         try {
           const res = await fetch('/api/auth/me');
           if (res.ok) {
@@ -506,18 +506,10 @@
             }
           }
         } catch (e) {}
-
-        // Fallback to localStorage if API failed
-        if (!data) {
-          const local = localStorage.getItem('wp_officer_session');
-          if (local) {
-            try { data = JSON.parse(local); } catch (e) {}
-          }
-        }
       }
 
       if (!data || !data.id) {
-        window.location.href = isStatic ? './employee.html' : '/employee';
+        window.location.href = './employee.html';
         return;
       }
 

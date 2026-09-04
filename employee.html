@@ -110,23 +110,21 @@
       'Probationary Security Officer', 'Internal Affairs', 'Command', 'Supervisor', 'Westpoint Security'
     ];
 
-    const isStaticHost = window.location.hostname.includes('github.io') || window.location.protocol === 'file:';
+    const isLocalBackend = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 
     function handleDiscordClick(e) {
-      if (!isStaticHost) {
+      if (isLocalBackend) {
         e.preventDefault();
         window.location.href = '/auth/discord';
         return;
       }
-      // On GitHub pages, let default link navigate to Discord authorize URL
+      // On Railway, custom domains, and GitHub Pages: let default link navigate to Discord authorize URL
     }
 
-    // Configure Sign-In button URL dynamically
+    // Configure Sign-In button URL dynamically for current host (Railway, GitHub Pages, or Custom Domain)
     const loginBtn = document.getElementById('btnDiscordLogin');
-    if (isStaticHost) {
-      const redirectUri = 'https://mysticwavezzz.github.io/westpoint-security/employee.html';
-      loginBtn.href = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=token&scope=identify%20guilds%20guilds.members.read`;
-    }
+    const redirectUri = window.location.origin + window.location.pathname;
+    loginBtn.href = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=token&scope=identify%20guilds%20guilds.members.read`;
 
     // Process OAuth hash token (#access_token=...)
     async function processHashToken() {
@@ -138,7 +136,7 @@
           try {
             const sess = JSON.parse(existing);
             if (sess && sess.id) {
-              window.location.href = isStaticHost ? './employee-dashboard.html' : '/employee/dashboard';
+              window.location.href = './employee-dashboard.html';
             }
           } catch (e) {}
         }
@@ -214,7 +212,7 @@
         localStorage.setItem('wp_officer_session', JSON.stringify(sessionPayload));
         statusBox.innerText = 'Authentication successful! Loading Workbench...';
         window.location.hash = '';
-        window.location.href = isStaticHost ? './employee-dashboard.html' : '/employee/dashboard';
+        window.location.href = './employee-dashboard.html';
       } catch (err) {
         statusBox.style.display = 'none';
         errBox.style.display = 'block';
