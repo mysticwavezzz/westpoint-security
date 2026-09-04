@@ -12,7 +12,10 @@ const BASE_DIR = __dirname;
 // pages and assets sit directly at the root.
 const VIEWS_DIR = fs.existsSync(path.join(BASE_DIR, 'views')) ? path.join(BASE_DIR, 'views') : BASE_DIR;
 const PUBLIC_DIR = fs.existsSync(path.join(BASE_DIR, 'public')) ? path.join(BASE_DIR, 'public') : BASE_DIR;
-const DATA_DIR = path.join(BASE_DIR, 'data');
+// Overridable (e.g. DATA_DIR=/data/app-data on a mounted Railway Volume) so
+// sessions/reports/incidents survive redeploys instead of living on the
+// container's ephemeral disk, which gets wiped on every deploy otherwise.
+const DATA_DIR = process.env.DATA_DIR || path.join(BASE_DIR, 'data');
 const robloxService = require('./lib/robloxService.js');
 // Shared with the Discord bot (resilient-meitner). That bot currently only
 // runs on this machine, so this only resolves where the bot's SQLite file is

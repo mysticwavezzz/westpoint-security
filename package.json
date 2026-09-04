@@ -1,14 +1,17 @@
 {
   "name": "westpoint-security-portal",
   "version": "1.0.0",
-  "description": "Westpoint Security public web portal and officer workbench",
+  "description": "Westpoint Security public web portal, officer workbench, and Discord bot",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node start.js",
+    "start:bot": "node bot/src/index.js"
   },
   "license": "ISC",
   "dependencies": {
     "axios": "^1.13.4",
-    "better-sqlite3": "^12.6.0"
+    "better-sqlite3": "^12.6.0",
+    "discord.js": "^14.21.0",
+    "dotenv": "^17.3.1"
   }
 }
