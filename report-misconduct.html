@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Report Misconduct | Westpoint Security</title>
+  <link rel="icon" href="./assets/favicon.png" />
+  <link rel="stylesheet" href="./css/style.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <div class="page-shell">
+    <nav class="utility-nav" aria-label="Utility navigation">
+      <a href="./site-map.html">SITE MAP</a>
+      <span aria-hidden="true"> | </span>
+      <a href="./contact.html">CONTACT US</a>
+      <span aria-hidden="true"> | </span>
+      <a href="./report-misconduct.html">REPORT MISCONDUCT</a>
+      <span aria-hidden="true"> | </span>
+      <a href="./employee.html">EMPLOYEE ACCESS</a>
+    </nav>
+
+    <header class="masthead">
+      <a href="./index.html" class="masthead-identity">
+        <img src="./assets/logo.png" alt="Westpoint Security" width="78" height="78" class="masthead-logo" />
+        <div class="corporate-identity">
+          <span class="corporate-name">Westpoint Security</span>
+          <span class="corporate-branch">Harrison Branch</span>
+        </div>
+      </a>
+      <div class="headquarters-summary">
+        <strong>Regional Office</strong>
+        <span>Harrison County</span>
+      </div>
+    </header>
+
+    <nav class="primary-nav" aria-label="Primary navigation">
+      <a href="./index.html">HOME</a>
+      <a href="./services.html">SERVICES</a>
+      <a href="./newsroom.html">NEWS</a>
+      <a href="./report-misconduct.html" class="is-active">REPORT MISCONDUCT</a>
+      <a href="./careers.html">CAREERS</a>
+      <a href="./contact.html">CONTACT US</a>
+      <a href="./employee.html">EMPLOYEE ACCESS</a>
+    </nav>
+
+    <main class="main-layout" id="main-content" tabindex="-1">
+      <article class="main-content">
+        <h1>Report Misconduct / Commendations</h1>
+
+        <!-- Auth Required Notice (Shown when logged out) -->
+        <section class="content-box" id="authGateNotice" style="display: none; max-width: 540px; margin: 24px auto;">
+          <h2>Authentication Required</h2>
+          <div class="content-box-body" style="padding: 24px; text-align: center;">
+            <p style="margin: 0 0 16px; font-size: 12px; color: #546675; line-height: 1.5;">
+              To ensure authenticity and prevent fraudulent or duplicate filings, you must sign in with your verified Discord account to submit an official misconduct report or officer commendation.
+            </p>
+            <div style="margin: 18px 0 10px;">
+              <a href="/auth/discord" class="period-button period-button-discord" style="font-size: 11px; padding: 10px 24px;">
+                [ SIGN IN WITH DISCORD TO SUBMIT ]
+              </a>
+            </div>
+            <p style="font-size: 10.5px; color: #788A99; margin-top: 14px;">
+              Your identity is securely verified through Discord OAuth2.
+            </p>
+          </div>
+        </section>
+
+        <!-- Authenticated Form Container (Shown when logged in) -->
+        <section class="content-box content-box-notice" id="reportFormContainer" style="display: none;">
+          <h2>Submit a Report</h2>
+          <div class="content-box-body">
+            <div style="background: #ECEFF1; border: 1px solid #CFD8DC; padding: 8px 12px; margin-bottom: 14px; font-size: 11px; display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <strong>Verified Submitter:</strong> <span id="authSubmitterName" style="color: #9E2A2B; font-weight: bold;">Loading...</span>
+              </div>
+              <span class="status-pill status-pill-green">AUTHENTICATED</span>
+            </div>
+
+            <form class="period-form" id="reportForm" onsubmit="submitReport(event)">
+              <fieldset>
+                <legend>Report Information</legend>
+                <label>Submission Type:
+                  <select name="submissionType" required>
+                    <option value="Misconduct">Officer Misconduct</option>
+                    <option value="Commendation">Officer Commendation</option>
+                  </select>
+                </label>
+                <label>Reported Officer Name / Call-Sign:
+                  <input type="text" name="officerName" required placeholder="e.g. Officer John Doe, Unit 4" />
+                </label>
+                <label>Incident Location:
+                  <input type="text" name="location" required placeholder="e.g. Harrison County Plaza, Sector 4" />
+                </label>
+                <label>Incident Narrative & Statement:
+                  <textarea name="narrative" required placeholder="Detail the events, actions observed, and any relevant times or context..."></textarea>
+                </label>
+              </fieldset>
+              <div>
+                <button type="submit" class="period-button" id="btnSubmitReport">[ SUBMIT REPORT ]</button>
+              </div>
+              <div id="reportStatus" style="margin-top: 8px; font-weight: bold; font-size: 11px;"></div>
+            </form>
+          </div>
+        </section>
+      </article>
+    </main>
+
+    <footer class="site-footer">
+      <nav aria-label="Footer navigation">
+        <a href="./index.html">HOME</a> | 
+        <a href="./services.html">SERVICES</a> | 
+        <a href="./newsroom.html">NEWS</a> | 
+        <a href="./report-misconduct.html">REPORT MISCONDUCT</a> | 
+        <a href="./careers.html">CAREERS</a> | 
+        <a href="./contact.html">CONTACT</a> | 
+        <a href="./site-map.html">SITE MAP</a> | 
+        <a href="./employee.html">EMPLOYEE ACCESS</a>
+      </nav>
+      <p><strong>Westpoint Security · Harrison Branch</strong></p>
+      <p>Copyright &copy; 2026 Westpoint Security. All Rights Reserved.</p>
+    </footer>
+  </div>
+
+  <script>
+    async function checkAuthAndInit() {
+      try {
+        const res = await fetch('/api/auth/me');
+        const data = await res.json();
+        if (data.authenticated) {
+          document.getElementById('reportFormContainer').style.display = 'block';
+          document.getElementById('authGateNotice').style.display = 'none';
+          document.getElementById('authSubmitterName').innerText = (data.displayName || data.username) + ' (' + data.username + ')';
+        } else {
+          document.getElementById('reportFormContainer').style.display = 'none';
+          document.getElementById('authGateNotice').style.display = 'block';
+        }
+      } catch (e) {
+        document.getElementById('reportFormContainer').style.display = 'none';
+        document.getElementById('authGateNotice').style.display = 'block';
+      }
+    }
+
+    async function submitReport(e) {
+      e.preventDefault();
+      const form = document.getElementById('reportForm');
+      const statusDiv = document.getElementById('reportStatus');
+      const submitBtn = document.getElementById('btnSubmitReport');
+
+      statusDiv.style.color = '#546675';
+      statusDiv.innerText = 'Submitting report to Internal Affairs...';
+      submitBtn.disabled = true;
+
+      const payload = {
+        type: form.submissionType.value,
+        officer: form.officerName.value,
+        location: form.location.value,
+        report: form.narrative.value
+      };
+
+      try {
+        const res = await fetch('/api/report', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        submitBtn.disabled = false;
+
+        if (res.ok && data.success) {
+          statusDiv.style.color = 'green';
+          statusDiv.innerText = 'Report Submitted Successfully! Case Reference: ' + (data.record?.id || 'DESK-RECORDED');
+          form.reset();
+        } else {
+          statusDiv.style.color = '#9E2A2B';
+          statusDiv.innerText = 'Submission Failed: ' + (data.error || 'Authentication required.');
+        }
+      } catch(err) {
+        submitBtn.disabled = false;
+        statusDiv.style.color = '#9E2A2B';
+        statusDiv.innerText = 'Network error submitting report.';
+      }
+    }
+
+    checkAuthAndInit();
+  </script>
+</body>
+</html>

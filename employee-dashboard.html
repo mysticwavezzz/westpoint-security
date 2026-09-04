@@ -1,0 +1,1026 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Officer Workbench | Westpoint Security</title>
+  <link rel="icon" href="./assets/favicon.png" />
+  <link rel="stylesheet" href="./css/style.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <div class="page-shell">
+    <nav class="utility-nav" aria-label="Utility navigation">
+      <a href="./site-map.html">SITE MAP</a>
+      <span aria-hidden="true"> | </span>
+      <a href="./contact.html">CONTACT US</a>
+      <span aria-hidden="true"> | </span>
+      <a href="./report-misconduct.html">REPORT MISCONDUCT</a>
+      <span aria-hidden="true"> | </span>
+      <a href="/api/auth/logout" style="color: #9E2A2B;">SIGN OUT</a>
+    </nav>
+
+    <header class="masthead">
+      <a href="./index.html" class="masthead-identity">
+        <img src="./assets/logo.png" alt="Westpoint Security" width="78" height="78" class="masthead-logo" />
+        <div class="corporate-identity">
+          <span class="corporate-name">Westpoint Security</span>
+          <span class="corporate-branch">Harrison Branch</span>
+        </div>
+      </a>
+      <div class="headquarters-summary">
+        <strong>OPERATIONAL STATUS</strong>
+        <span style="color: #4ade80;">● SYSTEM ACTIVE</span>
+      </div>
+    </header>
+
+    <nav class="primary-nav" aria-label="Primary navigation">
+      <a href="./index.html">HOME</a>
+      <a href="./services.html">SERVICES</a>
+      <a href="./newsroom.html">NEWS</a>
+      <a href="./report-misconduct.html">REPORT MISCONDUCT</a>
+      <a href="./careers.html">CAREERS</a>
+      <a href="./employee.html" class="is-active">OFFICER WORKBENCH</a>
+      <a href="/api/auth/logout">SIGN OUT</a>
+    </nav>
+
+    <main class="main-layout" id="main-content" tabindex="-1">
+      <article class="main-content">
+        <!-- Officer Identity Header -->
+        <section class="home-lead" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; margin-bottom: 12px;">
+          <div style="display: flex; align-items: center; gap: 14px;">
+            <img id="officerAvatar" src="./assets/logo.png" alt="Avatar" width="58" height="58" style="border: 2px solid #9E2A2B; border-radius: 4px; object-fit: cover; box-shadow: 0 2px 5px rgba(0,0,0,0.2);" />
+            <div>
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 2px;">
+                <span id="officerBadgeRole" class="tier-badge tier-badge-command">OFFICER</span>
+              </div>
+              <h1 id="officerNameDisplay" style="border: none; margin: 0; font-size: 20px; line-height: 1.2;">Loading Officer...</h1>
+              <span id="officerDiscordTag" style="font-size: 11px; color: #546675;">Discord ID: Synchronizing...</span>
+            </div>
+          </div>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <span id="officerDutyPill" class="status-pill status-pill-yellow">OFF DUTY</span>
+            <a href="/api/auth/logout" class="period-button period-button-secondary">[ SIGN OUT ]</a>
+          </div>
+        </section>
+
+        <!-- Operational Tab Navigation -->
+        <div class="dash-nav-bar" id="dashboardNav">
+          <button type="button" class="dash-tab-btn is-active" onclick="switchTab('field')">1. Field Station</button>
+          <button type="button" class="dash-tab-btn" onclick="switchTab('roster')">2. Live Duty Roster</button>
+          <button type="button" class="dash-tab-btn" onclick="switchTab('incidents')">3. Incident Archive</button>
+          <button type="button" class="dash-tab-btn" id="tabBtnIA" style="display: none;" onclick="switchTab('ia')">4. Internal Affairs Desk</button>
+          <button type="button" class="dash-tab-btn" id="tabBtnCommand" style="display: none;" onclick="switchTab('command')">5. Command Center</button>
+        </div>
+
+        <!-- ==============================================
+             TAB 1: FIELD STATION
+             ============================================== -->
+        <section id="tab-field" class="dash-section is-active">
+          <div class="feature-grid">
+            <!-- Personal Shift Logger -->
+            <section class="content-box">
+              <h2>Duty Shift Logger & In-Game Verification</h2>
+              <div class="content-box-body">
+                <div style="background: #ECEFF1; border: 1px solid #CFD8DC; padding: 10px 12px; margin-bottom: 10px; font-size: 12px; display: flex; justify-content: space-between; align-items: center;">
+                  <div>
+                    <strong>Shift Elapsed:</strong> <span id="shiftTimerDisplay" style="font-family: monospace; font-size: 14px; font-weight: bold; color: #1E252D;">00:00:00</span>
+                    <div id="shiftRobloxUser" style="font-size: 10px; color: #546675; margin-top: 2px;"></div>
+                  </div>
+                  <span id="shiftStatusIndicator" class="status-pill status-pill-yellow">OFF DUTY</span>
+                </div>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                  <button type="button" class="period-button" id="btnStartShift" onclick="toggleShift(true)">[ START DUTY ]</button>
+                  <button type="button" class="period-button period-button-secondary" id="btnEndShift" onclick="toggleShift(false)">[ END DUTY ]</button>
+                  <span id="shiftActionSpinner" style="display: none; font-size: 11px; color: #546675; font-style: italic;">Verifying Roblox Presence...</span>
+                </div>
+                <div id="shiftNoticeBox" style="margin-top: 10px; padding: 8px 10px; font-size: 11px; border-radius: 2px; display: none;"></div>
+                <p style="margin-top: 10px; font-size: 10.5px; color: #546675;">
+                  * Shift logging requires active in-game presence in <a href="https://www.roblox.com/games/10659924817" target="_blank" rel="noopener">Harrison County</a> on Roblox. Minimum 12 minutes required for weekly quota credit.
+                </p>
+              </div>
+            </section>
+
+            <!-- Server & Role Sync -->
+            <section class="content-box">
+              <h2>Verified Rank & Discord Sync</h2>
+              <div class="content-box-body">
+                <ul style="padding-left: 18px; margin: 4px 0; font-size: 11.5px; color: #2D3942; line-height: 1.7;">
+                  <li>Active Ranks: <span id="officerRolesList" style="font-weight: 700; color: #9E2A2B;">Security Officer</span></li>
+                  <li>Security Clearances: <span id="officerClearanceText" style="font-weight: 700;">Standard Guard Clearance</span></li>
+                  <li>Server Guild: <span style="font-family: monospace;">1522793078199419022</span></li>
+                </ul>
+              </div>
+            </section>
+          </div>
+
+          <!-- Incident Report Generator -->
+          <section class="content-box">
+            <h2>Field Incident Report Generator</h2>
+            <div class="content-box-body">
+              <form class="period-form" id="officerIncidentForm" onsubmit="submitIncident(event)">
+                <fieldset>
+                  <legend>Incident Details</legend>
+                  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px;">
+                    <label>Incident Location:
+                      <input type="text" name="incidentLoc" required placeholder="e.g. Harrison County Plaza, Sector 4" />
+                    </label>
+                    <label>Suspect / Citizen Name:
+                      <input type="text" name="suspectName" placeholder="Roblox Username or 'Unknown'" />
+                    </label>
+                  </div>
+                  <label>Action Taken / Enforcement Code:
+                    <select name="actionTaken">
+                      <option value="Verbal Warning / De-escalation">Verbal Warning / De-escalation</option>
+                      <option value="Trespass Notice Issued">Trespass Notice Issued</option>
+                      <option value="Perimeter Lockdown / Escort">Perimeter Lockdown / Escort</option>
+                      <option value="Weapon Drawn / Lethal Defense">Weapon Drawn / Lethal Defense</option>
+                    </select>
+                  </label>
+                  <label>Incident Narrative & Description:
+                    <textarea name="summary" required placeholder="Detail sequence of events, radio calls, and final disposition..."></textarea>
+                  </label>
+                </fieldset>
+                <div>
+                  <button type="submit" class="period-button" id="btnSubmitIncident">[ FILE INCIDENT REPORT ]</button>
+                </div>
+                <div id="incidentStatus" style="margin-top: 8px; font-weight: bold; font-size: 11px;"></div>
+              </form>
+            </div>
+          </section>
+
+          
+        </section>
+
+        <!-- ==============================================
+             TAB 2: LIVE DUTY ROSTER & SHIFT BOARD
+             ============================================== -->
+        <section id="tab-roster" class="dash-section">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <p style="margin: 0; font-size: 12px; color: #546675;">
+              Active in-game Roblox autolog duty sessions synced live from the department database.
+            </p>
+            <button type="button" class="period-button period-button-secondary" onclick="loadDutyRoster()">[ REFRESH ROSTER ]</button>
+          </div>
+
+          <section class="content-box">
+            <h2>Active Field Personnel (In-Game Autolog)</h2>
+            <div class="content-box-body" style="padding: 0;">
+              <div class="period-table-wrap" style="margin-bottom: 0; border: none;">
+                <table class="period-table">
+                  <thead>
+                    <tr>
+                      <th>Roblox Officer</th>
+                      <th>Location / Game</th>
+                      <th>Clock-In Time</th>
+                      <th>Duration</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="rosterTableBody">
+                    <tr><td colspan="5" class="table-empty-msg">Querying department database...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <section class="content-box" style="margin-top: 14px;">
+            <h2>Weekly Activity Quota Standings (<span id="rosterWeekKey">Current Week</span>)</h2>
+            <div class="content-box-body" style="padding: 0;">
+              <div class="period-table-wrap" style="margin-bottom: 0; border: none;">
+                <table class="period-table">
+                  <thead>
+                    <tr>
+                      <th style="width: 50px;">Rank</th>
+                      <th>Staff Member</th>
+                      <th>Discord User ID</th>
+                      <th>Weekly Total Logged</th>
+                      <th>Quota Compliance</th>
+                    </tr>
+                  </thead>
+                  <tbody id="leaderboardTableBody">
+                    <tr><td colspan="5" class="table-empty-msg">Loading quota metrics...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <!-- ==============================================
+             TAB 3: INCIDENT ARCHIVE
+             ============================================== -->
+        <section id="tab-incidents" class="dash-section">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <p style="margin: 0; font-size: 12px; color: #546675;">
+              Filed security incident reports and tactical actions.
+            </p>
+            <button type="button" class="period-button period-button-secondary" onclick="loadIncidents()">[ REFRESH ARCHIVE ]</button>
+          </div>
+
+          <section class="content-box">
+            <h2>Incident Reports Archive</h2>
+            <div class="content-box-body" style="padding: 0;">
+              <div class="period-table-wrap" style="margin-bottom: 0; border: none;">
+                <table class="period-table">
+                  <thead>
+                    <tr>
+                      <th>Incident ID</th>
+                      <th>Date / Time</th>
+                      <th>Officer</th>
+                      <th>Location</th>
+                      <th>Action Taken</th>
+                      <th>Summary</th>
+                    </tr>
+                  </thead>
+                  <tbody id="incidentsTableBody">
+                    <tr><td colspan="6" class="table-empty-msg">Loading incidents archive...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <!-- ==============================================
+             TAB 4: INTERNAL AFFAIRS DESK (IA & COMMAND)
+             ============================================== -->
+        <section id="tab-ia" class="dash-section">
+          <div class="content-box content-box-notice" style="margin-bottom: 14px;">
+            <h2>Internal Affairs Case Review Docket</h2>
+            <div class="content-box-body">
+              <p>
+                Authorized personnel review and adjudicate citizen complaints and officer commendations submitted through the public misconduct intake desk.
+              </p>
+            </div>
+          </div>
+
+          <!-- IA Case Table -->
+          <section class="content-box">
+            <h2>Citizen Intake Reports</h2>
+            <div class="content-box-body" style="padding: 0;">
+              <div class="period-table-wrap" style="margin-bottom: 0; border: none;">
+                <table class="period-table">
+                  <thead>
+                    <tr>
+                      <th>Case ID</th>
+                      <th>Type</th>
+                      <th>Citizen</th>
+                      <th>Reported Officer</th>
+                      <th>Location</th>
+                      <th>Submitted</th>
+                      <th>Status</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="iaReportsTableBody">
+                    <tr><td colspan="8" class="table-empty-msg">Loading Internal Affairs docket...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <!-- IA Adjudication Modal / Panel -->
+          <section class="content-box" id="iaReviewPanel" style="display: none; margin-top: 14px;">
+            <h2>Case File Adjudication: <span id="iaCaseIdDisplay">#DESK-000000</span></h2>
+            <div class="content-box-body">
+              <div style="background: #F4F6F8; border: 1px solid #CFD8DC; padding: 12px; margin-bottom: 12px; font-size: 12px;">
+                <p><strong>Citizen Narrative:</strong></p>
+                <blockquote id="iaCaseNarrative" style="margin: 6px 0; font-style: italic; color: #2D3942; background: #FFF; padding: 8px 12px; border-left: 3px solid #9E2A2B;"></blockquote>
+                <p style="margin: 6px 0 0; font-size: 11px; color: #546675;">
+                  Reported Officer: <strong id="iaCaseOfficer">N/A</strong> · Location: <span id="iaCaseLoc">N/A</span>
+                </p>
+              </div>
+
+              <form class="period-form" id="iaDispositionForm" onsubmit="submitIADisposition(event)">
+                <input type="hidden" id="iaTargetReportId" />
+                <fieldset>
+                  <legend>Investigative Disposition</legend>
+                  <label>Case Status:
+                    <select id="iaStatusSelect">
+                      <option value="Under Review">Under Review</option>
+                      <option value="Resolved - Action Taken">Resolved - Action Taken</option>
+                      <option value="Unfounded / Dismissed">Unfounded / Dismissed</option>
+                    </select>
+                  </label>
+                  <label>Investigative Findings & Disposition Notes:
+                    <textarea id="iaFindingsText" placeholder="Detail interview notes, bodycam review, or disciplinary disposition..."></textarea>
+                  </label>
+                </fieldset>
+                <div style="display: flex; gap: 8px;">
+                  <button type="submit" class="period-button">[ UPDATE CASE DISPOSITION ]</button>
+                  <button type="button" class="period-button period-button-secondary" onclick="document.getElementById('iaReviewPanel').style.display='none'">[ CLOSE PANEL ]</button>
+                </div>
+                <div id="iaUpdateStatus" style="margin-top: 8px; font-weight: bold; font-size: 11px;"></div>
+              </form>
+            </div>
+          </section>
+        </section>
+
+        <!-- ==============================================
+             TAB 5: COMMAND STAFF CENTER (HIGH COMMAND)
+             ============================================== -->
+        <section id="tab-command" class="dash-section">
+          <!-- Command Staff Action Dispatcher -->
+          <section class="content-box" style="margin-bottom: 14px;">
+            <h2>Issue Department Action (Administrative Log)</h2>
+            <div class="content-box-body">
+              <p style="margin-bottom: 12px; font-size: 11.5px; color: #546675;">
+                Issues an official departmental staff management record, dispatches a formatted embed to Discord <code>#administrative-log</code>, and synchronizes staff state.
+              </p>
+
+              <form class="period-form" id="commandActionForm" onsubmit="submitCommandAction(event)">
+                <fieldset>
+                  <legend>Action Parameters</legend>
+                  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px;">
+                    <label>Action Type:
+                      <select name="actionType" id="cmdActionTypeSelect" onchange="updateActionFields()">
+                        <option value="hire">Hire</option>
+                        <option value="promote">Promote</option>
+                        <option value="demote">Demote</option>
+                        <option value="terminate">Terminate</option>
+                        <option value="adminleave">Admin Leave</option>
+                        <option value="suspend">Suspend</option>
+                        <option value="warn">Warn</option>
+                        <option value="custom">Custom Action</option>
+                      </select>
+                    </label>
+                    <label>Target Staff Member Name:
+                      <input type="text" name="targetUser" required placeholder="Staff Username / Display Name" />
+                    </label>
+                    <label>Target Discord User ID (Optional):
+                      <input type="text" name="targetUserId" placeholder="e.g. 1432838222618296343" />
+                    </label>
+                  </div>
+
+                  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px;" id="dynamicCmdFields">
+                    <label id="lblRoleRank">Assigned Role / Rank:
+                      <input type="text" name="roleRank" placeholder="e.g. Security Officer, Sergeant" />
+                    </label>
+                    <label id="lblContext">Additional Context / Details:
+                      <input type="text" name="context" placeholder="e.g. transferred to Harrison Branch, for 7 days" />
+                    </label>
+                  </div>
+
+                  <label>Notes & Justification:
+                    <textarea name="notes" placeholder="Enter administrative notes, review basis, or internal justification..."></textarea>
+                  </label>
+                </fieldset>
+                <div>
+                  <button type="submit" class="period-button" id="btnDispatchAction">[ DISPATCH DEPARTMENT ACTION ]</button>
+                </div>
+                <div id="cmdActionStatus" style="margin-top: 8px; font-weight: bold; font-size: 11px;"></div>
+              </form>
+            </div>
+          </section>
+
+          <!-- News Bulletin Publisher -->
+          <section class="content-box">
+            <h2>News Bulletin Publisher (Public Newsroom)</h2>
+            <div class="content-box-body">
+              <p style="margin-bottom: 12px; font-size: 11.5px; color: #546675;">
+                Publish official press announcements and operational alerts directly to the public website home and newsroom pages.
+              </p>
+
+              <form class="period-form" id="newsPublishForm" onsubmit="submitNewsArticle(event)">
+                <fieldset>
+                  <legend>Publish Article</legend>
+                  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px;">
+                    <label>Bulletin Title:
+                      <input type="text" name="newsTitle" required placeholder="e.g. Increased Night Patrols in Harrison Sector 3" />
+                    </label>
+                    <label>Category:
+                      <select name="newsCategory">
+                        <option value="Department Notice">Department Notice</option>
+                        <option value="Operational Alert">Operational Alert</option>
+                        <option value="Press Release">Press Release</option>
+                        <option value="Public Advisory">Public Advisory</option>
+                      </select>
+                    </label>
+                  </div>
+                  <label>Summary / Lead Copy:
+                    <textarea name="newsSummary" required placeholder="Write the bulletin copy for the public..."></textarea>
+                  </label>
+                </fieldset>
+                <div>
+                  <button type="submit" class="period-button">[ PUBLISH BULLETIN ]</button>
+                </div>
+                <div id="newsPublishStatus" style="margin-top: 8px; font-weight: bold; font-size: 11px;"></div>
+              </form>
+
+              <!-- Published Articles Table -->
+              <h3 style="margin: 18px 0 6px; font-family: var(--font-brand); font-size: 14px;">Currently Published Bulletins</h3>
+              <div class="period-table-wrap" style="margin-bottom: 0;">
+                <table class="period-table">
+                  <thead>
+                    <tr>
+                      <th>Title</th>
+                      <th>Category</th>
+                      <th>Author</th>
+                      <th>Date</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="cmdNewsTableBody">
+                    <tr><td colspan="5" class="table-empty-msg">Loading bulletins...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </section>
+      </article>
+    </main>
+
+    <footer class="site-footer">
+      <p><strong>Westpoint Security · Officer Duty Station</strong></p>
+      <p>Copyright &copy; 2026 Westpoint Security. All Rights Reserved.</p>
+    </footer>
+  </div>
+
+  <script>
+    let officerSession = null;
+    let shiftInterval = null;
+    let shiftSeconds = 0;
+
+    // Switch Tabs
+    function switchTab(tabKey) {
+      document.querySelectorAll('.dash-tab-btn').forEach(btn => btn.classList.remove('is-active'));
+      document.querySelectorAll('.dash-section').forEach(sec => sec.classList.remove('is-active'));
+
+      const targetSection = document.getElementById('tab-' + tabKey);
+      if (targetSection) targetSection.classList.add('is-active');
+
+      const buttons = document.querySelectorAll('.dash-tab-btn');
+      if (tabKey === 'field') buttons[0]?.classList.add('is-active');
+      if (tabKey === 'roster') {
+        buttons[1]?.classList.add('is-active');
+        loadDutyRoster();
+      }
+      if (tabKey === 'incidents') {
+        buttons[2]?.classList.add('is-active');
+        loadIncidents();
+      }
+      if (tabKey === 'ia') {
+        document.getElementById('tabBtnIA')?.classList.add('is-active');
+        loadIAReports();
+      }
+      if (tabKey === 'command') {
+        document.getElementById('tabBtnCommand')?.classList.add('is-active');
+        loadCommandNews();
+      }
+    }
+
+    // Load Officer Session
+    async function loadOfficerSession() {
+      try {
+        const res = await fetch('/api/auth/me');
+        const data = await res.json();
+        if (!data.authenticated) {
+          window.location.href = '/employee';
+          return;
+        }
+
+        officerSession = data;
+        document.getElementById('officerNameDisplay').innerText = data.displayName || data.username;
+        document.getElementById('officerBadgeRole').innerText = data.highestRank || 'SECURITY OFFICER';
+        document.getElementById('officerDiscordTag').innerText = 'Discord: ' + data.username + ' (' + data.id + ')';
+        if (data.avatar) {
+          document.getElementById('officerAvatar').src = data.avatar;
+        }
+        if (data.roles && data.roles.length) {
+          document.getElementById('officerRolesList').innerText = data.roles.join(', ');
+        }
+
+        // Configure Rank Badge & Permissions
+        const perms = data.permissions || {};
+        const badgeRole = document.getElementById('officerBadgeRole');
+        const rankName = (data.highestRank || 'SECURITY OFFICER').toUpperCase();
+        badgeRole.innerText = rankName;
+
+        if (perms.isCommand) {
+          badgeRole.className = 'tier-badge tier-badge-command';
+          document.getElementById('officerClearanceText').innerText = 'Command Executive Clearances';
+          document.getElementById('tabBtnCommand').style.display = 'inline-block';
+          document.getElementById('tabBtnIA').style.display = 'inline-block';
+        } else if (perms.isSupervisor) {
+          badgeRole.className = 'tier-badge tier-badge-supervisor';
+          document.getElementById('officerClearanceText').innerText = 'Supervisor Operational Clearances';
+        } else {
+          badgeRole.className = 'tier-badge tier-badge-officer';
+          document.getElementById('officerClearanceText').innerText = 'Standard Guard Clearance';
+        }
+
+        if (perms.isInternalAffairs) {
+          document.getElementById('tabBtnIA').style.display = 'inline-block';
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    // Check Active Shift on Backend
+    async function checkDutyStatus() {
+      try {
+        const res = await fetch('/api/duty/status');
+        const data = await res.json();
+        if (data.active) {
+          shiftSeconds = data.elapsedSeconds || 0;
+          startClientStopwatch();
+          if (data.robloxUsername) {
+            document.getElementById('shiftRobloxUser').innerText = 'Roblox: ' + data.robloxUsername;
+          }
+        }
+      } catch (e) {
+        console.error('Duty check error:', e);
+      }
+    }
+
+    function startClientStopwatch() {
+      const statusEl = document.getElementById('shiftStatusIndicator');
+      const pillEl = document.getElementById('officerDutyPill');
+      const timerEl = document.getElementById('shiftTimerDisplay');
+
+      statusEl.innerText = 'ON DUTY';
+      statusEl.className = 'status-pill status-pill-green';
+      pillEl.innerText = 'ON DUTY';
+      pillEl.className = 'status-pill status-pill-green';
+
+      if (shiftInterval) clearInterval(shiftInterval);
+      shiftInterval = setInterval(() => {
+        shiftSeconds++;
+        const hrs = String(Math.floor(shiftSeconds / 3600)).padStart(2, '0');
+        const mins = String(Math.floor((shiftSeconds % 3600) / 60)).padStart(2, '0');
+        const secs = String(shiftSeconds % 60).padStart(2, '0');
+        timerEl.innerText = hrs + ':' + mins + ':' + secs;
+      }, 1000);
+    }
+
+    function stopClientStopwatch() {
+      if (shiftInterval) {
+        clearInterval(shiftInterval);
+        shiftInterval = null;
+      }
+      shiftSeconds = 0;
+      document.getElementById('shiftTimerDisplay').innerText = '00:00:00';
+      document.getElementById('shiftStatusIndicator').innerText = 'OFF DUTY';
+      document.getElementById('shiftStatusIndicator').className = 'status-pill status-pill-yellow';
+      document.getElementById('officerDutyPill').innerText = 'OFF DUTY';
+      document.getElementById('officerDutyPill').className = 'status-pill status-pill-yellow';
+      document.getElementById('shiftRobloxUser').innerText = '';
+    }
+
+    // Toggle Shift with Backend Roblox Presence Check
+    async function toggleShift(start) {
+      const noticeBox = document.getElementById('shiftNoticeBox');
+      const spinner = document.getElementById('shiftActionSpinner');
+      const btnStart = document.getElementById('btnStartShift');
+      const btnEnd = document.getElementById('btnEndShift');
+
+      noticeBox.style.display = 'none';
+
+      if (start) {
+        if (shiftInterval) {
+          noticeBox.style.display = 'block';
+          noticeBox.style.background = '#FFFDE7';
+          noticeBox.style.border = '1px solid #FFF176';
+          noticeBox.style.color = '#F57F17';
+          noticeBox.innerText = 'You already have an active duty shift running.';
+          return;
+        }
+
+        btnStart.disabled = true;
+        spinner.style.display = 'inline-block';
+        spinner.innerText = 'Checking Roblox game presence...';
+
+        try {
+          const res = await fetch('/api/duty/start', { method: 'POST' });
+          const data = await res.json();
+          btnStart.disabled = false;
+          spinner.style.display = 'none';
+
+          if (!res.ok || !data.success) {
+            // Presence check failed!
+            noticeBox.style.display = 'block';
+            noticeBox.style.background = '#FFEBEE';
+            noticeBox.style.border = '1px solid #E57373';
+            noticeBox.style.color = '#B71C1C';
+            noticeBox.innerHTML = '<strong>Duty Start Blocked:</strong> ' + escapeHtml(data.error || 'You are not in Harrison County on Roblox.');
+            return;
+          }
+
+          // Verification succeeded
+          noticeBox.style.display = 'block';
+          noticeBox.style.background = '#E8F5E9';
+          noticeBox.style.border = '1px solid #81C784';
+          noticeBox.style.color = '#1B5E20';
+          noticeBox.innerText = 'Roblox Presence Verified! Shift officially started for ' + (data.robloxUsername || 'Officer') + '.';
+          if (data.robloxUsername) {
+            document.getElementById('shiftRobloxUser').innerText = 'Roblox: ' + data.robloxUsername;
+          }
+          startClientStopwatch();
+          loadDutyRoster();
+        } catch (e) {
+          btnStart.disabled = false;
+          spinner.style.display = 'none';
+          noticeBox.style.display = 'block';
+          noticeBox.style.background = '#FFEBEE';
+          noticeBox.style.border = '1px solid #E57373';
+          noticeBox.style.color = '#B71C1C';
+          noticeBox.innerText = 'Server error during Roblox presence verification.';
+        }
+      } else {
+        // End shift
+        if (!shiftInterval) {
+          noticeBox.style.display = 'block';
+          noticeBox.style.background = '#FFFDE7';
+          noticeBox.style.border = '1px solid #FFF176';
+          noticeBox.style.color = '#F57F17';
+          noticeBox.innerText = 'No active duty shift is currently running.';
+          return;
+        }
+
+        btnEnd.disabled = true;
+        spinner.style.display = 'inline-block';
+        spinner.innerText = 'Finalizing autolog session...';
+
+        try {
+          const res = await fetch('/api/duty/end', { method: 'POST' });
+          const data = await res.json();
+          btnEnd.disabled = false;
+          spinner.style.display = 'none';
+
+          stopClientStopwatch();
+
+          noticeBox.style.display = 'block';
+          if (data.logged) {
+            noticeBox.style.background = '#E8F5E9';
+            noticeBox.style.border = '1px solid #81C784';
+            noticeBox.style.color = '#1B5E20';
+            noticeBox.innerText = 'Shift Ended & Credited: ' + data.durationFormatted + ' logged to your weekly quota!';
+          } else {
+            noticeBox.style.background = '#FFFDE7';
+            noticeBox.style.border = '1px solid #FFF176';
+            noticeBox.style.color = '#F57F17';
+            noticeBox.innerText = data.message || 'Shift ended (Under 12-minute threshold).';
+          }
+          loadDutyRoster();
+        } catch (e) {
+          btnEnd.disabled = false;
+          spinner.style.display = 'none';
+          stopClientStopwatch();
+        }
+      }
+    }
+
+    // Submit Incident
+    async function submitIncident(e) {
+      e.preventDefault();
+      const form = document.getElementById('officerIncidentForm');
+      const statusDiv = document.getElementById('incidentStatus');
+      statusDiv.style.color = '#555';
+      statusDiv.innerText = 'Filing incident report...';
+
+      const payload = {
+        location: form.incidentLoc.value,
+        suspect: form.suspectName.value || 'N/A',
+        action: form.actionTaken.value,
+        summary: form.summary.value
+      };
+
+      try {
+        const res = await fetch('/api/officer/incident', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        statusDiv.style.color = 'green';
+        statusDiv.innerText = 'Incident Logged Successfully! Case Ref: ' + (data.record?.id || 'INC-DONE');
+        form.reset();
+      } catch (err) {
+        statusDiv.style.color = 'green';
+        statusDiv.innerText = 'Incident Logged!';
+        form.reset();
+      }
+    }
+
+    // Load Duty Roster
+    async function loadDutyRoster() {
+      const rosterTable = document.getElementById('rosterTableBody');
+      const lbTable = document.getElementById('leaderboardTableBody');
+      rosterTable.innerHTML = '<tr><td colspan="5" class="table-empty-msg">Querying database...</td></tr>';
+
+      try {
+        const res = await fetch('/api/duty-roster');
+        const data = await res.json();
+
+        // 1. In-game active officers
+        if (!data.activeSessions || data.activeSessions.length === 0) {
+          rosterTable.innerHTML = '<tr><td colspan="5" class="table-empty-msg">No officers currently clocked into Roblox autolog.</td></tr>';
+        } else {
+          rosterTable.innerHTML = data.activeSessions.map(s => `
+            <tr>
+              <td><strong>${escapeHtml(s.robloxUsername)}</strong> <span style="font-size: 10px; color: #666;">(${escapeHtml(s.userId)})</span></td>
+              <td>${escapeHtml(s.location)}</td>
+              <td style="font-family: monospace;">${new Date(s.startTime).toLocaleTimeString()}</td>
+              <td style="font-family: monospace; font-weight: bold; color: #1B5E20;">${escapeHtml(s.elapsedFormatted)}</td>
+              <td><span class="status-pill status-pill-green">● IN GAME</span></td>
+            </tr>
+          `).join('');
+        }
+
+        // 2. Weekly leaderboard
+        document.getElementById('rosterWeekKey').innerText = data.weekKey || 'Current Week';
+        if (!data.weeklyQuotaLeaderboard || data.weeklyQuotaLeaderboard.length === 0) {
+          lbTable.innerHTML = '<tr><td colspan="5" class="table-empty-msg">No weekly duty records logged yet.</td></tr>';
+        } else {
+          lbTable.innerHTML = data.weeklyQuotaLeaderboard.map((item, index) => {
+            const isTargetMet = item.totalSeconds >= (60 * 60); // 1 hour threshold for example
+            return `
+              <tr>
+                <td style="font-weight: bold; text-align: center;">#${index + 1}</td>
+                <td><strong>${escapeHtml(item.robloxUsername)}</strong></td>
+                <td style="font-family: monospace; font-size: 11px;">${escapeHtml(item.userId)}</td>
+                <td style="font-family: monospace; font-weight: bold;">${escapeHtml(item.totalFormatted)}</td>
+                <td>
+                  <span class="status-pill ${isTargetMet ? 'status-pill-green' : 'status-pill-yellow'}">
+                    ${isTargetMet ? 'COMPLIANT' : 'PENDING'}
+                  </span>
+                </td>
+              </tr>
+            `;
+          }).join('');
+        }
+      } catch (e) {
+        rosterTable.innerHTML = '<tr><td colspan="5" class="table-empty-msg">Unable to load duty roster.</td></tr>';
+      }
+    }
+
+    // Load Incident Archive
+    async function loadIncidents() {
+      const table = document.getElementById('incidentsTableBody');
+      table.innerHTML = '<tr><td colspan="6" class="table-empty-msg">Loading incidents...</td></tr>';
+      try {
+        const res = await fetch('/api/officer/incidents');
+        const data = await res.json();
+        if (!data.incidents || data.incidents.length === 0) {
+          table.innerHTML = '<tr><td colspan="6" class="table-empty-msg">No incident reports recorded yet.</td></tr>';
+        } else {
+          table.innerHTML = data.incidents.map(inc => `
+            <tr>
+              <td style="font-family: monospace; font-weight: bold; color: #9E2A2B;">${escapeHtml(inc.id)}</td>
+              <td style="font-size: 10.5px;">${new Date(inc.timestamp).toLocaleString()}</td>
+              <td><strong>${escapeHtml(inc.officer)}</strong> <span style="font-size: 10px; color: #666;">(${escapeHtml(inc.rank)})</span></td>
+              <td>${escapeHtml(inc.location)}</td>
+              <td><span class="status-pill status-pill-blue">${escapeHtml(inc.action)}</span></td>
+              <td style="max-width: 250px; overflow-wrap: break-word;">${escapeHtml(inc.summary)}</td>
+            </tr>
+          `).join('');
+        }
+      } catch (e) {
+        table.innerHTML = '<tr><td colspan="6" class="table-empty-msg">Error loading incidents archive.</td></tr>';
+      }
+    }
+
+    // Load IA Reports
+    async function loadIAReports() {
+      const table = document.getElementById('iaReportsTableBody');
+      table.innerHTML = '<tr><td colspan="8" class="table-empty-msg">Loading Internal Affairs docket...</td></tr>';
+      try {
+        const res = await fetch('/api/ia/reports');
+        const data = await res.json();
+        if (!data.reports || data.reports.length === 0) {
+          table.innerHTML = '<tr><td colspan="8" class="table-empty-msg">No citizen complaints or commendations filed.</td></tr>';
+        } else {
+          table.innerHTML = data.reports.map(rep => {
+            let statusPill = 'status-pill-blue';
+            if (rep.status === 'Resolved - Action Taken') statusPill = 'status-pill-green';
+            if (rep.status === 'Unfounded / Dismissed') statusPill = 'status-pill-red';
+            if (rep.status === 'New') statusPill = 'status-pill-yellow';
+
+            const typePill = rep.type === 'Misconduct' ? 'status-pill-red' : 'status-pill-blue';
+
+            return `
+              <tr>
+                <td style="font-family: monospace; font-weight: bold;">${escapeHtml(rep.id)}</td>
+                <td><span class="status-pill ${typePill}">${escapeHtml(rep.type)}</span></td>
+                <td>${escapeHtml(rep.citizen)}</td>
+                <td><strong>${escapeHtml(rep.officer)}</strong></td>
+                <td>${escapeHtml(rep.location)}</td>
+                <td style="font-size: 10.5px;">${new Date(rep.timestamp).toLocaleDateString()}</td>
+                <td><span class="status-pill ${statusPill}">${escapeHtml(rep.status || 'New')}</span></td>
+                <td>
+                  <button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 4px 8px;" onclick='openIAReview(${JSON.stringify(rep).replace(/'/g, "&#39;")})'>
+                    [ ADJUDICATE ]
+                  </button>
+                </td>
+              </tr>
+            `;
+          }).join('');
+        }
+      } catch (e) {
+        table.innerHTML = '<tr><td colspan="8" class="table-empty-msg">Error loading Internal Affairs docket.</td></tr>';
+      }
+    }
+
+    function openIAReview(rep) {
+      document.getElementById('iaReviewPanel').style.display = 'block';
+      document.getElementById('iaCaseIdDisplay').innerText = rep.id;
+      document.getElementById('iaTargetReportId').value = rep.id;
+      document.getElementById('iaCaseNarrative').innerText = rep.report;
+      document.getElementById('iaCaseOfficer').innerText = rep.officer;
+      document.getElementById('iaCaseLoc').innerText = rep.location;
+      document.getElementById('iaStatusSelect').value = rep.status || 'Under Review';
+      document.getElementById('iaFindingsText').value = rep.findings || '';
+      document.getElementById('iaReviewPanel').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    async function submitIADisposition(e) {
+      e.preventDefault();
+      const statusMsg = document.getElementById('iaUpdateStatus');
+      statusMsg.innerText = 'Updating disposition...';
+      const reportId = document.getElementById('iaTargetReportId').value;
+      const status = document.getElementById('iaStatusSelect').value;
+      const findings = document.getElementById('iaFindingsText').value;
+
+      try {
+        const res = await fetch('/api/ia/report/update', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ reportId, status, findings })
+        });
+        const data = await res.json();
+        if (data.success) {
+          statusMsg.style.color = 'green';
+          statusMsg.innerText = 'Case Disposition Updated Successfully!';
+          loadIAReports();
+        } else {
+          statusMsg.style.color = '#9E2A2B';
+          statusMsg.innerText = 'Error: ' + (data.error || 'Failed to update');
+        }
+      } catch (err) {
+        statusMsg.style.color = '#9E2A2B';
+        statusMsg.innerText = 'Server error updating case disposition.';
+      }
+    }
+
+    // Command Action Dispatcher
+    function updateActionFields() {
+      const act = document.getElementById('cmdActionTypeSelect').value;
+      const lblRole = document.getElementById('lblRoleRank');
+      const lblContext = document.getElementById('lblContext');
+
+      if (act === 'hire') {
+        lblRole.style.display = 'grid';
+        lblRole.querySelector('input').placeholder = 'e.g. Security Officer';
+        lblContext.style.display = 'none';
+      } else if (act === 'promote' || act === 'demote') {
+        lblRole.style.display = 'grid';
+        lblRole.querySelector('input').placeholder = 'e.g. Inspector, Sergeant';
+        lblContext.style.display = 'grid';
+        lblContext.querySelector('input').placeholder = 'e.g. transferred to Standards Division';
+      } else if (act === 'suspend') {
+        lblRole.style.display = 'none';
+        lblContext.style.display = 'grid';
+        lblContext.querySelector('input').placeholder = 'e.g. for 7 days';
+      } else if (act === 'adminleave' || act === 'terminate' || act === 'warn') {
+        lblRole.style.display = 'none';
+        lblContext.style.display = 'none';
+      } else {
+        lblRole.style.display = 'grid';
+        lblContext.style.display = 'grid';
+      }
+    }
+
+    async function submitCommandAction(e) {
+      e.preventDefault();
+      const form = document.getElementById('commandActionForm');
+      const statusMsg = document.getElementById('cmdActionStatus');
+      statusMsg.style.color = '#546675';
+      statusMsg.innerText = 'Dispatching department action to Discord...';
+
+      const payload = {
+        type: form.actionType.value,
+        targetUser: form.targetUser.value,
+        targetUserId: form.targetUserId.value,
+        roleRank: form.roleRank?.value || '',
+        context: form.context?.value || '',
+        notes: form.notes?.value || ''
+      };
+
+      try {
+        const res = await fetch('/api/command/action', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.success) {
+          statusMsg.style.color = 'green';
+          statusMsg.innerText = 'Staff Action Dispatched to Discord #administrative-log! (Ref: ' + data.record.id + ')';
+          form.reset();
+          updateActionFields();
+        } else {
+          statusMsg.style.color = '#9E2A2B';
+          statusMsg.innerText = 'Error: ' + (data.error || 'Failed to dispatch action');
+        }
+      } catch (err) {
+        statusMsg.style.color = '#9E2A2B';
+        statusMsg.innerText = 'Server error dispatching department action.';
+      }
+    }
+
+    // Command News Publisher
+    async function loadCommandNews() {
+      const table = document.getElementById('cmdNewsTableBody');
+      table.innerHTML = '<tr><td colspan="5" class="table-empty-msg">Loading bulletins...</td></tr>';
+      try {
+        const res = await fetch('/api/news');
+        const data = await res.json();
+        if (!data.news || data.news.length === 0) {
+          table.innerHTML = '<tr><td colspan="5" class="table-empty-msg">No articles published.</td></tr>';
+        } else {
+          table.innerHTML = data.news.map(n => `
+            <tr>
+              <td><strong>${escapeHtml(n.title)}</strong></td>
+              <td><span class="status-pill status-pill-blue">${escapeHtml(n.category)}</span></td>
+              <td>${escapeHtml(n.author)}</td>
+              <td style="font-size: 11px;">${escapeHtml(n.date)}</td>
+              <td>
+                <button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 4px 8px; color: #9E2A2B !important;" onclick="deleteNewsArticle('${n.id}')">
+                  [ DELETE ]
+                </button>
+              </td>
+            </tr>
+          `).join('');
+        }
+      } catch (e) {
+        table.innerHTML = '<tr><td colspan="5" class="table-empty-msg">Error loading bulletins.</td></tr>';
+      }
+    }
+
+    async function submitNewsArticle(e) {
+      e.preventDefault();
+      const form = document.getElementById('newsPublishForm');
+      const statusMsg = document.getElementById('newsPublishStatus');
+      statusMsg.style.color = '#546675';
+      statusMsg.innerText = 'Publishing article to public portal...';
+
+      const payload = {
+        title: form.newsTitle.value,
+        category: form.newsCategory.value,
+        summary: form.newsSummary.value
+      };
+
+      try {
+        const res = await fetch('/api/news', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.success) {
+          statusMsg.style.color = 'green';
+          statusMsg.innerText = 'Article Published Successfully!';
+          form.reset();
+          loadCommandNews();
+        } else {
+          statusMsg.style.color = '#9E2A2B';
+          statusMsg.innerText = 'Error: ' + (data.error || 'Failed to publish');
+        }
+      } catch (err) {
+        statusMsg.style.color = '#9E2A2B';
+        statusMsg.innerText = 'Server error publishing news article.';
+      }
+    }
+
+    async function deleteNewsArticle(id) {
+      if (!confirm('Are you sure you want to delete this news bulletin?')) return;
+      try {
+        await fetch('/api/news/' + id, { method: 'DELETE' });
+        loadCommandNews();
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    // Startup
+    loadOfficerSession();
+    checkDutyStatus();
+    updateActionFields();
+  </script>
+</body>
+</html>

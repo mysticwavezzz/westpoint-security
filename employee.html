@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Employee Access | Westpoint Security</title>
+  <link rel="icon" href="./assets/favicon.png" />
+  <link rel="stylesheet" href="./css/style.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <div class="page-shell">
+    <nav class="utility-nav" aria-label="Utility navigation">
+      <a href="./site-map.html">SITE MAP</a>
+      <span aria-hidden="true"> | </span>
+      <a href="./contact.html">CONTACT US</a>
+      <span aria-hidden="true"> | </span>
+      <a href="./report-misconduct.html">REPORT MISCONDUCT</a>
+      <span aria-hidden="true"> | </span>
+      <a href="./employee.html">EMPLOYEE ACCESS</a>
+    </nav>
+
+    <header class="masthead">
+      <a href="./index.html" class="masthead-identity">
+        <img src="./assets/logo.png" alt="Westpoint Security" width="78" height="78" class="masthead-logo" />
+        <div class="corporate-identity">
+          <span class="corporate-name">Westpoint Security</span>
+          <span class="corporate-branch">Harrison Branch</span>
+        </div>
+      </a>
+      <div class="headquarters-summary">
+        <strong>Regional Office</strong>
+        <span>Harrison County</span>
+      </div>
+    </header>
+
+    <nav class="primary-nav" aria-label="Primary navigation">
+      <a href="./index.html">HOME</a>
+      <a href="./services.html">SERVICES</a>
+      <a href="./newsroom.html">NEWS</a>
+      <a href="./report-misconduct.html">REPORT MISCONDUCT</a>
+      <a href="./careers.html">CAREERS</a>
+      <a href="./contact.html">CONTACT US</a>
+      <a href="./employee.html" class="is-active">EMPLOYEE ACCESS</a>
+    </nav>
+
+    <main class="main-layout" id="main-content" tabindex="-1">
+      <article class="main-content">
+        <h1>Employee Access</h1>
+
+        <section class="content-box" style="max-width: 500px; margin: 24px auto;">
+          <h2>Security Officer Sign-In</h2>
+          <div class="content-box-body" style="padding: 24px; text-align: center;">
+            <div style="margin: 14px 0;">
+              <a href="/auth/discord" class="period-button period-button-discord" style="font-size: 11px; padding: 10px 24px;">
+                [ SIGN IN WITH DISCORD ]
+              </a>
+            </div>
+            <div id="authErrorMsg" style="margin-top: 14px; font-size: 11px; color: #9E2A2B; font-weight: bold; display: none;"></div>
+          </div>
+        </section>
+      </article>
+    </main>
+
+    <footer class="site-footer">
+      <nav aria-label="Footer navigation">
+        <a href="./index.html">HOME</a> | 
+        <a href="./services.html">SERVICES</a> | 
+        <a href="./newsroom.html">NEWS</a> | 
+        <a href="./report-misconduct.html">REPORT MISCONDUCT</a> | 
+        <a href="./careers.html">CAREERS</a> | 
+        <a href="./contact.html">CONTACT</a> | 
+        <a href="./site-map.html">SITE MAP</a> | 
+        <a href="./employee.html">EMPLOYEE ACCESS</a>
+      </nav>
+      <p><strong>Westpoint Security · Harrison Branch</strong></p>
+      <p>Copyright &copy; 2026 Westpoint Security. All Rights Reserved.</p>
+    </footer>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const err = params.get('error');
+    if (err) {
+      const errBox = document.getElementById('authErrorMsg');
+      errBox.style.display = 'block';
+      if (err === 'unauthorized_role') {
+        errBox.innerText = 'Access Denied: Security Officer rank required.';
+      } else {
+        errBox.innerText = 'Authentication error: ' + err;
+      }
+    }
+  </script>
+</body>
+</html>
