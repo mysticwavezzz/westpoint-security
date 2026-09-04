@@ -38,64 +38,241 @@
       <a href="./index.html">HOME</a>
       <a href="./services.html">SERVICES</a>
       <a href="./newsroom.html">NEWS</a>
-      <a href="./report-misconduct.html">REPORT MISCONDUCT</a>
       <a href="./careers.html">CAREERS</a>
-      <a href="./contact.html" class="is-active">CONTACT US</a>
+      <a href="./contact.html" class="is-active">CONTACT &amp; REPORTS</a>
       <a href="./employee.html">EMPLOYEE ACCESS</a>
     </nav>
 
     <main class="main-layout" id="main-content" tabindex="-1">
       <article class="main-content">
-        <h1>Contact Us</h1>
+        <h1>Contact &amp; Reporting Desk</h1>
         
-        <section class="content-box">
-          <h2>Westpoint Security Headquarters</h2>
+        <section class="content-box" style="margin-bottom: 14px;">
+          <h2>Department Information &amp; Directory</h2>
           <div class="content-box-body">
-            <p><strong>Regional Jurisdiction:</strong> Harrison County</p>
-            <p><strong>Department Inquiries:</strong> General inquiries, private contracting, event coverage, and administrative contacts.</p>
-            <p><strong>Misconduct & Commendations:</strong> <a href="./report-misconduct.html">[ Official IA Docket / Filing Desk ]</a></p>
+            <p><strong>Regional Headquarters:</strong> Harrison County Branch Office</p>
+            <p><strong>Jurisdiction:</strong> Harrison County Municipal and Contracted Operational Zones</p>
+            <p><strong>Public Inquiries:</strong> General questions, service requests, private patrol contracting, and official Internal Affairs misconduct dockets.</p>
           </div>
         </section>
 
-        <section class="content-box content-box-notice" style="margin-top: 18px;">
-          <h2>Reach Out to Staff</h2>
-          <div class="content-box-body">
-            <p style="margin: 0 0 14px; font-size: 11.5px; color: #4A5B69;">
-              Use this official communication form to direct questions, service contract inquiries, or general notices to Westpoint Security leadership and staff.
+        <!-- Discord Authentication Gate Notice (Shown when logged out) -->
+        <section class="content-box" id="authGateNotice" style="display: none; max-width: 540px; margin: 24px auto;">
+          <h2>Discord Sign-In Required</h2>
+          <div class="content-box-body" style="padding: 24px; text-align: center;">
+            <p style="margin: 0 0 16px; font-size: 12px; color: #546675; line-height: 1.5;">
+              To protect staff communications, maintain accountability, and prevent automated spam or fraudulent reports, you must sign in with your verified Discord account to access the contact and reporting forms.
             </p>
-
-            <form class="period-form" id="staffContactForm" onsubmit="handleStaffContact(event)">
-              <fieldset>
-                <legend>Inquiry Details</legend>
-                <label>Your Name / Organization:
-                  <input type="text" name="senderName" required placeholder="e.g. John Doe, Harrison County Business Association" />
-                </label>
-                <label>Discord Username or Contact Handle:
-                  <input type="text" name="contactHandle" required placeholder="e.g. j_doe or email / Roblox username" />
-                </label>
-                <label>Subject / Topic:
-                  <select name="inquiryCategory" required>
-                    <option value="General Inquiry">General Staff Inquiry</option>
-                    <option value="Event Security Contract">Event Security Coverage Request</option>
-                    <option value="Private Property Contract">Private / Commercial Property Security</option>
-                    <option value="Administrative Question">Administrative / Command Question</option>
-                    <option value="Other">Other Notice</option>
-                  </select>
-                </label>
-                <label>Message / Details:
-                  <textarea name="messageContent" required placeholder="Provide full details regarding your inquiry or request..."></textarea>
-                </label>
-              </fieldset>
-              <div style="margin-top: 10px;">
-                <button type="submit" class="period-button" id="btnSubmitContact">[ TRANSMIT TO STAFF ]</button>
-              </div>
-              <div id="contactStatusMsg" style="margin-top: 10px; font-weight: bold; font-size: 11px;"></div>
-            </form>
+            <div style="margin: 18px 0 10px;">
+              <a id="btnDiscordLoginGate" 
+                 href="#" 
+                 class="period-button period-button-discord" 
+                 style="font-size: 11px; padding: 10px 24px; cursor: pointer; text-decoration: none; display: inline-block;">
+                [ SIGN IN WITH DISCORD TO ACCESS FORMS ]
+              </a>
+            </div>
+            <p style="font-size: 10.5px; color: #788A99; margin-top: 14px;">
+              Your identity is verified securely via Discord OAuth2.
+            </p>
           </div>
         </section>
+
+        <!-- Authenticated Communication Portal -->
+        <div id="contactPortalContainer" style="display: none;">
+          <!-- User Status Banner -->
+          <div style="background: #ECEFF1; border: 1px solid #CFD8DC; padding: 8px 14px; margin-bottom: 14px; font-size: 11.5px; display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <strong>Verified Identity:</strong> <span id="authUserNameDisplay" style="color: #9E2A2B; font-weight: bold;">Loading...</span>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <span class="status-pill status-pill-green">AUTHENTICATED</span>
+              <button type="button" class="period-button period-button-secondary" style="font-size: 9.5px; padding: 2px 8px; cursor: pointer;" onclick="handleContactSignOut()">[ Sign Out ]</button>
+            </div>
+          </div>
+
+          <!-- Form Selection Tabs -->
+          <div class="dash-nav-bar" style="margin-bottom: 14px;">
+            <button type="button" class="dash-tab-btn is-active" id="tabBtnGeneral" onclick="switchContactTab('general')">1. General Contact &amp; Staff Inquiries</button>
+            <button type="button" class="dash-tab-btn" id="tabBtnMisconduct" onclick="switchContactTab('misconduct')">2. Report Misconduct / Commendations</button>
+          </div>
+
+          <!-- TAB 1: General Contact Form -->
+          <section class="content-box content-box-notice" id="tabGeneralForm">
+            <h2>Reach Out to Staff</h2>
+            <div class="content-box-body">
+              <p style="margin: 0 0 14px; font-size: 11.5px; color: #4A5B69;">
+                Use this official communication form to direct questions, service contract inquiries, or general notices to Westpoint Security leadership and staff.
+              </p>
+
+              <form class="period-form" id="staffContactForm" onsubmit="handleStaffContact(event)">
+                <fieldset>
+                  <legend>Inquiry Details</legend>
+                  <label>Your Name / Organization:
+                    <input type="text" name="senderName" required placeholder="e.g. John Doe, Harrison County Business Association" />
+                  </label>
+                  <label>Discord Username or Contact Handle:
+                    <input type="text" name="contactHandle" id="generalContactHandle" required placeholder="e.g. j_doe or email / Roblox username" />
+                  </label>
+                  <label>Subject / Topic:
+                    <select name="inquiryCategory" required>
+                      <option value="General Inquiry">General Staff Inquiry</option>
+                      <option value="Event Security Contract">Event Security Coverage Request</option>
+                      <option value="Private Property Contract">Private / Commercial Property Security</option>
+                      <option value="Administrative Question">Administrative / Command Question</option>
+                      <option value="Other">Other Notice</option>
+                    </select>
+                  </label>
+                  <label>Message / Details:
+                    <textarea name="messageContent" required placeholder="Provide full details regarding your inquiry or request..."></textarea>
+                  </label>
+                </fieldset>
+                <div style="margin-top: 10px;">
+                  <button type="submit" class="period-button" id="btnSubmitContact">[ TRANSMIT TO STAFF ]</button>
+                </div>
+                <div id="contactStatusMsg" style="margin-top: 10px; font-weight: bold; font-size: 11px;"></div>
+              </form>
+            </div>
+          </section>
+
+          <!-- TAB 2: Misconduct & Commendations Form -->
+          <section class="content-box content-box-notice" id="tabMisconductForm" style="display: none;">
+            <h2>Internal Affairs Incident &amp; Commendation Docket</h2>
+            <div class="content-box-body">
+              <p style="margin: 0 0 14px; font-size: 11.5px; color: #4A5B69;">
+                Official docket for reporting officer misconduct or submitting officer commendations. Filings are routed directly to the Internal Affairs division.
+              </p>
+
+              <form class="period-form" id="reportForm" onsubmit="submitReport(event)">
+                <fieldset>
+                  <legend>Report Information</legend>
+                  <label>Submission Type:
+                    <select name="submissionType" required>
+                      <option value="Misconduct">Officer Misconduct</option>
+                      <option value="Commendation">Officer Commendation</option>
+                    </select>
+                  </label>
+                  <label>Reported Officer Name / Call-Sign:
+                    <input type="text" name="officerName" required placeholder="e.g. Officer John Doe, Unit 4" />
+                  </label>
+                  <label>Incident Location:
+                    <input type="text" name="location" required placeholder="e.g. Harrison County Plaza, Sector 4" />
+                  </label>
+                  <label>Incident Narrative &amp; Statement:
+                    <textarea name="narrative" required placeholder="Detail the events, actions observed, and any relevant times or context..."></textarea>
+                  </label>
+                </fieldset>
+                <div style="margin-top: 10px;">
+                  <button type="submit" class="period-button" id="btnSubmitReport">[ SUBMIT TO INTERNAL AFFAIRS ]</button>
+                </div>
+                <div id="reportStatus" style="margin-top: 10px; font-weight: bold; font-size: 11px;"></div>
+              </form>
+            </div>
+          </section>
+        </div>
       </article>
 
       <script>
+        const CLIENT_ID = '1540023346794856540';
+        let currentUser = null;
+
+        // Configure OAuth login button
+        const loginBtn = document.getElementById('btnDiscordLoginGate');
+        const redirectUri = window.location.origin + window.location.pathname;
+        loginBtn.href = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=token&scope=identify`;
+
+        function switchContactTab(mode) {
+          const btnGeneral = document.getElementById('tabBtnGeneral');
+          const btnMisconduct = document.getElementById('tabBtnMisconduct');
+          const secGeneral = document.getElementById('tabGeneralForm');
+          const secMisconduct = document.getElementById('tabMisconductForm');
+
+          if (mode === 'misconduct') {
+            btnGeneral.classList.remove('is-active');
+            btnMisconduct.classList.add('is-active');
+            secGeneral.style.display = 'none';
+            secMisconduct.style.display = 'block';
+          } else {
+            btnMisconduct.classList.remove('is-active');
+            btnGeneral.classList.add('is-active');
+            secMisconduct.style.display = 'none';
+            secGeneral.style.display = 'block';
+          }
+        }
+
+        function handleContactSignOut() {
+          localStorage.removeItem('wp_citizen_session');
+          localStorage.removeItem('wp_officer_session');
+          window.location.href = window.location.origin + window.location.pathname;
+        }
+
+        async function initAuth() {
+          // 1. Process OAuth hash token (#access_token=...)
+          const hash = window.location.hash.substring(1);
+          if (hash) {
+            const params = new URLSearchParams(hash);
+            const token = params.get('access_token');
+            if (token) {
+              try {
+                const uRes = await fetch('https://discord.com/api/v10/users/@me', {
+                  headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (uRes.ok) {
+                  const uObj = await uRes.json();
+                  const sess = {
+                    id: uObj.id,
+                    username: uObj.username,
+                    displayName: uObj.global_name || uObj.username
+                  };
+                  localStorage.setItem('wp_citizen_session', JSON.stringify(sess));
+                  window.location.hash = '';
+                }
+              } catch(e) {
+                console.error(e);
+              }
+            }
+          }
+
+          // 2. Check server session if available
+          try {
+            const res = await fetch('/api/auth/me');
+            if (res.ok) {
+              const data = await res.json();
+              if (data && data.authenticated) {
+                currentUser = data;
+              }
+            }
+          } catch(e) {}
+
+          // 3. Fallback to localStorage session
+          if (!currentUser) {
+            const local = localStorage.getItem('wp_citizen_session') || localStorage.getItem('wp_officer_session');
+            if (local) {
+              try { currentUser = JSON.parse(local); } catch(e) {}
+            }
+          }
+
+          if (currentUser && currentUser.id) {
+            document.getElementById('authGateNotice').style.display = 'none';
+            document.getElementById('contactPortalContainer').style.display = 'block';
+            document.getElementById('authUserNameDisplay').innerText = (currentUser.displayName || currentUser.username) + ' (' + currentUser.username + ')';
+            
+            const handleInput = document.getElementById('generalContactHandle');
+            if (handleInput && !handleInput.value) {
+              handleInput.value = currentUser.username;
+            }
+
+            // Check query param for default tab
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.get('mode') === 'misconduct') {
+              switchContactTab('misconduct');
+            }
+          } else {
+            document.getElementById('authGateNotice').style.display = 'block';
+            document.getElementById('contactPortalContainer').style.display = 'none';
+          }
+        }
+
+        // Handle General Contact Form Submit
         async function handleStaffContact(e) {
           e.preventDefault();
           const form = document.getElementById('staffContactForm');
@@ -133,9 +310,53 @@
           } catch(err) {
             btn.disabled = false;
             statusDiv.style.color = '#9E2A2B';
-            statusDiv.innerText = 'Transmission error: Unable to contact server.';
+            statusDiv.innerText = 'Transmission error: Server currently unreachable.';
           }
         }
+
+        // Handle Misconduct Form Submit
+        async function submitReport(e) {
+          e.preventDefault();
+          const form = document.getElementById('reportForm');
+          const statusDiv = document.getElementById('reportStatus');
+          const submitBtn = document.getElementById('btnSubmitReport');
+
+          statusDiv.style.color = '#546675';
+          statusDiv.innerText = 'Submitting report to Internal Affairs...';
+          submitBtn.disabled = true;
+
+          const payload = {
+            type: form.submissionType.value,
+            officer: form.officerName.value,
+            location: form.location.value,
+            report: form.narrative.value
+          };
+
+          try {
+            const res = await fetch('/api/report', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            submitBtn.disabled = false;
+
+            if (res.ok && data.success) {
+              statusDiv.style.color = 'green';
+              statusDiv.innerText = 'Report Submitted Successfully! Case Reference: ' + (data.record?.id || 'DESK-RECORDED');
+              form.reset();
+            } else {
+              statusDiv.style.color = '#9E2A2B';
+              statusDiv.innerText = 'Submission Failed: ' + (data.error || 'Authentication required.');
+            }
+          } catch(err) {
+            submitBtn.disabled = false;
+            statusDiv.style.color = '#9E2A2B';
+            statusDiv.innerText = 'Network error submitting report.';
+          }
+        }
+
+        initAuth();
       </script>
     </main>
     <footer class="site-footer">

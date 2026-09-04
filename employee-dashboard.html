@@ -60,7 +60,7 @@
           </div>
           <div style="display: flex; gap: 8px; align-items: center;">
             <span id="officerDutyPill" class="status-pill status-pill-yellow">OFF DUTY</span>
-            <a href="/api/auth/logout" class="period-button period-button-secondary">[ SIGN OUT ]</a>
+            <a href="./employee.html" onclick="handleSignOut(event)" class="period-button period-button-secondary">[ SIGN OUT ]</a>
           </div>
         </section>
 
@@ -448,12 +448,7 @@
     function handleSignOut(e) {
       if (e) e.preventDefault();
       localStorage.removeItem('wp_officer_session');
-      const isStatic = window.location.hostname.includes('github.io') || window.location.protocol === 'file:';
-      if (isStatic) {
-        window.location.href = './employee.html';
-      } else {
-        window.location.href = '/api/auth/logout';
-      }
+      window.location.href = './employee.html';
     }
 
     // Switch Tabs
@@ -486,43 +481,43 @@
 
     // Load Officer Session
     async function loadOfficerSession() {
-      let data = null;
-      const isStatic = window.location.hostname.includes('github.io') || window.location.protocol === 'file:';
+      try {
+        let data = null;
 
-      // 1. Read localStorage session (Works instantly on Railway, GitHub Pages, and Custom Domains)
-      const local = localStorage.getItem('wp_officer_session');
-      if (local) {
-        try { data = JSON.parse(local); } catch (e) {}
-      }
+        // 1. Read localStorage session (Works instantly on Railway, GitHub Pages, and Custom Domains)
+        const local = localStorage.getItem('wp_officer_session');
+        if (local) {
+          try { data = JSON.parse(local); } catch (e) {}
+        }
 
-      // 2. If no local session and running with backend API, query /api/auth/me
-      if (!data) {
-        try {
-          const res = await fetch('/api/auth/me');
-          if (res.ok) {
-            const apiData = await res.json();
-            if (apiData && apiData.authenticated) {
-              data = apiData;
+        // 2. If no local session and running with backend API, query /api/auth/me
+        if (!data) {
+          try {
+            const res = await fetch('/api/auth/me');
+            if (res.ok) {
+              const apiData = await res.json();
+              if (apiData && apiData.authenticated) {
+                data = apiData;
+              }
             }
-          }
-        } catch (e) {}
-      }
+          } catch (e) {}
+        }
 
-      if (!data || !data.id) {
-        window.location.href = './employee.html';
-        return;
-      }
+        if (!data || !data.id) {
+          window.location.href = './employee.html';
+          return;
+        }
 
-      officerSession = data;
-      document.getElementById('officerNameDisplay').innerText = data.displayName || data.username;
-      document.getElementById('officerBadgeRole').innerText = (data.highestRank || 'SECURITY OFFICER').toUpperCase();
-      document.getElementById('officerDiscordTag').innerText = 'Discord: ' + data.username + ' (' + data.id + ')';
-      if (data.avatar) {
-        document.getElementById('officerAvatar').src = data.avatar;
-      }
-      if (data.roles && data.roles.length) {
-        document.getElementById('officerRolesList').innerText = data.roles.join(', ');
-      }
+        officerSession = data;
+        document.getElementById('officerNameDisplay').innerText = data.displayName || data.username;
+        document.getElementById('officerBadgeRole').innerText = (data.highestRank || 'SECURITY OFFICER').toUpperCase();
+        document.getElementById('officerDiscordTag').innerText = 'Discord: ' + data.username + ' (' + data.id + ')';
+        if (data.avatar) {
+          document.getElementById('officerAvatar').src = data.avatar;
+        }
+        if (data.roles && data.roles.length) {
+          document.getElementById('officerRolesList').innerText = data.roles.join(', ');
+        }
 
         // Configure Rank Badge & Permissions
         const perms = data.permissions || {};
@@ -547,7 +542,7 @@
           document.getElementById('tabBtnIA').style.display = 'inline-block';
         }
       } catch (e) {
-        console.error(e);
+        console.error('Session loading error:', e);
       }
     }
 
