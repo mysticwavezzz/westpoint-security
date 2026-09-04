@@ -489,22 +489,30 @@
       let data = null;
       const isStatic = window.location.hostname.includes('github.io') || window.location.protocol === 'file:';
 
-      // 1. Try Backend API
-      try {
-        const res = await fetch('/api/auth/me');
-        const apiData = await res.json();
-        if (apiData && apiData.authenticated) {
-          data = apiData;
-        }
-      } catch (e) {}
-
-      // 2. Fallback to localStorage (GitHub Pages Client-Side OAuth)
-      if (!data) {
+      // 1. On GitHub Pages: Read localStorage session directly
+      if (isStatic) {
         const local = localStorage.getItem('wp_officer_session');
         if (local) {
-          try {
-            data = JSON.parse(local);
-          } catch (e) {}
+          try { data = JSON.parse(local); } catch (e) {}
+        }
+      } else {
+        // 2. On Localhost / Node.js backend: Query /api/auth/me
+        try {
+          const res = await fetch('/api/auth/me');
+          if (res.ok) {
+            const apiData = await res.json();
+            if (apiData && apiData.authenticated) {
+              data = apiData;
+            }
+          }
+        } catch (e) {}
+
+        // Fallback to localStorage if API failed
+        if (!data) {
+          const local = localStorage.getItem('wp_officer_session');
+          if (local) {
+            try { data = JSON.parse(local); } catch (e) {}
+          }
         }
       }
 
@@ -515,14 +523,14 @@
 
       officerSession = data;
       document.getElementById('officerNameDisplay').innerText = data.displayName || data.username;
-      document.getElementById('officerBadgeRole').innerText = data.highestRank || 'SECURITY OFFICER';
-        document.getElementById('officerDiscordTag').innerText = 'Discord: ' + data.username + ' (' + data.id + ')';
-        if (data.avatar) {
-          document.getElementById('officerAvatar').src = data.avatar;
-        }
-        if (data.roles && data.roles.length) {
-          document.getElementById('officerRolesList').innerText = data.roles.join(', ');
-        }
+      document.getElementById('officerBadgeRole').innerText = (data.highestRank || 'SECURITY OFFICER').toUpperCase();
+      document.getElementById('officerDiscordTag').innerText = 'Discord: ' + data.username + ' (' + data.id + ')';
+      if (data.avatar) {
+        document.getElementById('officerAvatar').src = data.avatar;
+      }
+      if (data.roles && data.roles.length) {
+        document.getElementById('officerRolesList').innerText = data.roles.join(', ');
+      }
 
         // Configure Rank Badge & Permissions
         const perms = data.permissions || {};
@@ -553,8 +561,12 @@
 
     // Check Active Shift on Backend
     async function checkDutyStatus() {
+      const isStatic = window.location.hostname.includes('github.io') || window.location.protocol === 'file:';
+      if (isStatic) return;
+
       try {
         const res = await fetch('/api/duty/status');
+        if (!res.ok) return;
         const data = await res.json();
         if (data.active) {
           shiftSeconds = data.elapsedSeconds || 0;
