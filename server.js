@@ -1182,6 +1182,29 @@ const server = http.createServer(async (req, res) => {
     return sendJSON(res, 200, { success: true });
   }
 
+  // API: POST /api/admin/reset-quota-logs (Command Only - wipe weekly quota
+  // totals and shift history for a clean slate. Does not touch active
+  // sessions, staff roster, or bodycam recordings already in R2 - those
+  // still clean themselves up on the normal weekly expiry schedule.)
+  if (pathname === '/api/admin/reset-quota-logs' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+    try {
+      const totals = db.prepare('DELETE FROM weekly_totals').run();
+      const shifts = db.prepare('DELETE FROM shift_history').run();
+      return sendJSON(res, 200, {
+        success: true,
+        weeklyTotalsDeleted: totals.changes,
+        shiftHistoryDeleted: shifts.changes
+      });
+    } catch (e) {
+      console.error('[QUOTA RESET ERROR]', e.message);
+      return sendJSON(res, 500, { error: 'Failed to reset quota logs' });
+    }
+  }
 
   // API: GET /api/duty/status (Check current officer active session in bot.db)
   if (pathname === '/api/duty/status' && req.method === 'GET') {
