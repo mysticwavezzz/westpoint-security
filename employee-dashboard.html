@@ -15,9 +15,9 @@
       <span aria-hidden="true"> | </span>
       <a href="./contact.html">CONTACT US</a>
       <span aria-hidden="true"> | </span>
-      <a href="./report-misconduct.html">REPORT MISCONDUCT</a>
+      <a href="./contact.html?mode=misconduct">REPORT MISCONDUCT</a>
       <span aria-hidden="true"> | </span>
-      <a href="/api/auth/logout" style="color: #9E2A2B;">SIGN OUT</a>
+      <a href="./employee.html" onclick="handleSignOut(event)" style="color: #9E2A2B;">SIGN OUT</a>
     </nav>
 
     <header class="masthead">
@@ -38,10 +38,10 @@
       <a href="./index.html">HOME</a>
       <a href="./services.html">SERVICES</a>
       <a href="./newsroom.html">NEWS</a>
-      <a href="./report-misconduct.html">REPORT MISCONDUCT</a>
+      <a href="./contact.html?mode=misconduct">REPORT MISCONDUCT</a>
       <a href="./careers.html">CAREERS</a>
       <a href="./employee.html" class="is-active">OFFICER WORKBENCH</a>
-      <a href="/api/auth/logout" onclick="handleSignOut(event)">SIGN OUT</a>
+      <a href="./employee.html" onclick="handleSignOut(event)">SIGN OUT</a>
     </nav>
 
     <main class="main-layout" id="main-content" tabindex="-1">
@@ -814,16 +814,21 @@
       }
     }
 
+    const iaReportsStore = new Map();
+
     // Load IA Reports
     async function loadIAReports() {
       const table = document.getElementById('iaReportsTableBody');
       table.innerHTML = '<tr><td colspan="8" class="table-empty-msg">Loading Internal Affairs docket...</td></tr>';
+      iaReportsStore.clear();
+
       try {
         const res = await fetch('/api/ia/reports');
         const data = await res.json();
         if (!data.reports || data.reports.length === 0) {
           table.innerHTML = '<tr><td colspan="8" class="table-empty-msg">No citizen complaints or commendations filed.</td></tr>';
         } else {
+          data.reports.forEach(rep => iaReportsStore.set(rep.id, rep));
           table.innerHTML = data.reports.map(rep => {
             let statusPill = 'status-pill-blue';
             if (rep.status === 'Resolved - Action Taken') statusPill = 'status-pill-green';
@@ -842,7 +847,7 @@
                 <td style="font-size: 10.5px;">${new Date(rep.timestamp).toLocaleDateString()}</td>
                 <td><span class="status-pill ${statusPill}">${escapeHtml(rep.status || 'New')}</span></td>
                 <td>
-                  <button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 4px 8px;" onclick='openIAReview(${JSON.stringify(rep).replace(/'/g, "&#39;")})'>
+                  <button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 4px 8px;" onclick="openIAReview('${escapeHtml(rep.id)}')">
                     [ ADJUDICATE ]
                   </button>
                 </td>
@@ -855,7 +860,9 @@
       }
     }
 
-    function openIAReview(rep) {
+    function openIAReview(reportId) {
+      const rep = iaReportsStore.get(reportId);
+      if (!rep) return;
       document.getElementById('iaReviewPanel').style.display = 'block';
       document.getElementById('iaCaseIdDisplay').innerText = rep.id;
       document.getElementById('iaTargetReportId').value = rep.id;
