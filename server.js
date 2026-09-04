@@ -736,6 +736,63 @@ function nextShiftNumber(db, userId, weekKey) {
   return (row?.c || 0) + 1;
 }
 
+// Splits a merged shift video if needed and posts the "SHIFT LOG #N"
+// splitter / video(s) with embed+Trim button / closer sequence to the
+// officer's Discord channel. Shared by the live finalize path below and the
+// one-off R2->Discord backfill (migrateR2BodycamToDiscordAndReset) - the
+// only difference between those two callers is how shiftNumber gets
+// computed, since a bulk backfill can't just count already-'ready' rows the
+// way the live one-at-a-time path does (some of those rows might be other
+// not-yet-backfilled sessions from the same week). Returns { channelId,
+// messageIds }; leaves mergedPath itself alone but cleans up any split parts.
+async function postShiftVideoToDiscord(db, bcSession, mergedPath, durationSeconds, shiftNumber) {
+  const partPaths = await video.splitBySize(mergedPath, videoLog.DISCORD_FILE_LIMIT_BYTES, durationSeconds);
+  const staffRow = db.prepare('SELECT roblox_username FROM staff_members WHERE user_id = ?').get(bcSession.user_id);
+  const displayName = staffRow?.roblox_username || bcSession.user_id;
+  const channelId = await getOrCreateOfficerChannel(db, bcSession.user_id, displayName);
+  const messageIds = [];
+
+  try {
+    const opener = await videoLog.postMessage(DISCORD_BOT_TOKEN, channelId, {
+      content: `**═══════ SHIFT LOG #${shiftNumber} ═══════**\n<@${bcSession.user_id}> (${displayName}) • Duration: ${formatDuration(durationSeconds)} • ${new Date(bcSession.started_at).toLocaleString()}`
+    });
+    messageIds.push({ id: opener.id, type: 'splitter' });
+
+    for (let i = 0; i < partPaths.length; i++) {
+      const partLabel = partPaths.length > 1 ? ` (Part ${i + 1}/${partPaths.length})` : '';
+      const embed = {
+        title: `Shift Log #${shiftNumber}${partLabel}`,
+        color: 0x9E2A2B,
+        fields: [
+          { name: 'Officer', value: `<@${bcSession.user_id}> (${displayName})`, inline: true },
+          { name: 'Duration', value: formatDuration(durationSeconds), inline: true },
+          { name: 'Recorded', value: new Date(bcSession.started_at).toLocaleString(), inline: false }
+        ]
+      };
+      const button = {
+        type: 1,
+        components: [{ type: 2, style: 2, label: 'Trim Clip', custom_id: `bodycam_trim_open:${bcSession.id}:${i}` }]
+      };
+      const msg = await videoLog.postMessage(
+        DISCORD_BOT_TOKEN,
+        channelId,
+        { embeds: [embed], components: [button] },
+        [{ path: partPaths[i], name: `shift-${shiftNumber}${partPaths.length > 1 ? `-part${i + 1}` : ''}.webm` }]
+      );
+      messageIds.push({ id: msg.id, type: 'video', part: i + 1, total: partPaths.length });
+    }
+
+    const closer = await videoLog.postMessage(DISCORD_BOT_TOKEN, channelId, {
+      content: `**═══════ END SHIFT LOG #${shiftNumber} ═══════**`
+    });
+    messageIds.push({ id: closer.id, type: 'splitter' });
+  } finally {
+    partPaths.forEach(p => { if (p !== mergedPath) { try { fs.unlinkSync(p); } catch (e) {} } });
+  }
+
+  return { channelId, messageIds };
+}
+
 // Downloads every uploaded chunk for a finished bodycam session, stream-copy
 // concatenates them into one webm (no re-encoding - see lib/video.js for why
 // that matters), then posts it to the officer's Discord video-log channel
@@ -755,7 +812,6 @@ async function finalizeBodycamSession(bodycamId) {
 
   let localChunkPaths = [];
   let mergedPath = null;
-  let partPaths = [];
   try {
     // Downloaded in parallel - chunks.map preserves order in the results
     // regardless of which finishes first, which concatenation depends on.
@@ -781,48 +837,8 @@ async function finalizeBodycamSession(bodycamId) {
     // purposes.
     const durationSeconds = chunks.length * (BODYCAM_SEGMENT_MS / 1000);
 
-    partPaths = await video.splitBySize(mergedPath, videoLog.DISCORD_FILE_LIMIT_BYTES, durationSeconds);
-
-    const staffRow = db.prepare('SELECT roblox_username FROM staff_members WHERE user_id = ?').get(bcSession.user_id);
-    const displayName = staffRow?.roblox_username || bcSession.user_id;
-    const weekKey = bcSession.week_key;
-    const shiftNumber = nextShiftNumber(db, bcSession.user_id, weekKey);
-    const channelId = await getOrCreateOfficerChannel(db, bcSession.user_id, displayName);
-    const messageIds = [];
-
-    const opener = await videoLog.postMessage(DISCORD_BOT_TOKEN, channelId, {
-      content: `**═══════ SHIFT LOG #${shiftNumber} ═══════**\n<@${bcSession.user_id}> (${displayName}) • Duration: ${formatDuration(durationSeconds)} • ${new Date(bcSession.started_at).toLocaleString()}`
-    });
-    messageIds.push({ id: opener.id, type: 'splitter' });
-
-    for (let i = 0; i < partPaths.length; i++) {
-      const partLabel = partPaths.length > 1 ? ` (Part ${i + 1}/${partPaths.length})` : '';
-      const embed = {
-        title: `Shift Log #${shiftNumber}${partLabel}`,
-        color: 0x9E2A2B,
-        fields: [
-          { name: 'Officer', value: `<@${bcSession.user_id}> (${displayName})`, inline: true },
-          { name: 'Duration', value: formatDuration(durationSeconds), inline: true },
-          { name: 'Recorded', value: new Date(bcSession.started_at).toLocaleString(), inline: false }
-        ]
-      };
-      const button = {
-        type: 1,
-        components: [{ type: 2, style: 2, label: 'Trim Clip', custom_id: `bodycam_trim_open:${bodycamId}:${i}` }]
-      };
-      const msg = await videoLog.postMessage(
-        DISCORD_BOT_TOKEN,
-        channelId,
-        { embeds: [embed], components: [button] },
-        [{ path: partPaths[i], name: `shift-${shiftNumber}${partPaths.length > 1 ? `-part${i + 1}` : ''}.webm` }]
-      );
-      messageIds.push({ id: msg.id, type: 'video', part: i + 1, total: partPaths.length });
-    }
-
-    const closer = await videoLog.postMessage(DISCORD_BOT_TOKEN, channelId, {
-      content: `**═══════ END SHIFT LOG #${shiftNumber} ═══════**`
-    });
-    messageIds.push({ id: closer.id, type: 'splitter' });
+    const shiftNumber = nextShiftNumber(db, bcSession.user_id, bcSession.week_key);
+    const { channelId, messageIds } = await postShiftVideoToDiscord(db, bcSession, mergedPath, durationSeconds, shiftNumber);
 
     await r2.deleteObjects(chunks.map(c => c.key));
     const chunkBytesFreed = chunks.reduce((sum, c) => sum + c.size, 0);
@@ -836,8 +852,145 @@ async function finalizeBodycamSession(bodycamId) {
   } finally {
     localChunkPaths.forEach(p => { try { fs.unlinkSync(p); } catch (e) {} });
     if (mergedPath) { try { fs.unlinkSync(mergedPath); } catch (e) {} }
-    partPaths.forEach(p => { if (p !== mergedPath) { try { fs.unlinkSync(p); } catch (e) {} } });
   }
+}
+
+// One-off backfill: everything still sitting in R2 from before the
+// Discord-native archive existed gets posted to its officer's channel, then
+// deleted from R2 once that post is confirmed. Never deletes a session's R2
+// data unless it either posted successfully or has no matching
+// bodycam_sessions row at all (nothing to attribute it to). Triggered by
+// POST /api/admin/migrate-bodycam-to-discord; progress/results live in
+// bodycamMigrationState for the companion GET .../status endpoint to read.
+let bodycamMigrationState = { status: 'idle', log: [], startedAt: null, finishedAt: null, result: null };
+
+async function migrateR2BodycamToDiscordAndReset() {
+  const log = (msg) => {
+    bodycamMigrationState.log.push({ t: Date.now(), msg });
+    console.log('[BODYCAM MIGRATION]', msg);
+  };
+  bodycamMigrationState = { status: 'running', log: [], startedAt: Date.now(), finishedAt: null, result: null };
+
+  const db = getBotDb();
+  if (!db) throw new Error('Database unavailable');
+  if (!r2.isConfigured()) throw new Error('R2 is not configured');
+
+  const allObjects = await r2.listObjectsWithSize('bodycam/');
+  const byId = {};
+  for (const obj of allObjects) {
+    const m = obj.key.match(/^bodycam\/([^/]+)\//);
+    if (!m) continue;
+    const id = m[1];
+    byId[id] = byId[id] || { keys: [], hasFinal: false, chunkKeys: [] };
+    byId[id].keys.push(obj.key);
+    if (/\/final\.webm$/.test(obj.key)) byId[id].hasFinal = true;
+    if (/\/chunk-\d+\.webm$/.test(obj.key)) byId[id].chunkKeys.push(obj.key);
+  }
+  log(`Found ${Object.keys(byId).length} bodycam id(s) in R2 across ${allObjects.length} object(s).`);
+
+  const attributable = [];
+  const orphaned = [];
+  for (const [id, info] of Object.entries(byId)) {
+    const bcSession = db.prepare('SELECT * FROM bodycam_sessions WHERE id = ?').get(id);
+    if (bcSession) attributable.push({ id, info, bcSession });
+    else orphaned.push({ id, info });
+  }
+  attributable.sort((a, b) => a.bcSession.started_at - b.bcSession.started_at);
+  log(`${attributable.length} session(s) matched a database record; ${orphaned.length} orphaned (no matching record).`);
+
+  const migrated = [];
+  const failed = [];
+  const seedCounts = {};
+
+  for (const { id, info, bcSession } of attributable) {
+    try {
+      log(`Processing ${id} (user ${bcSession.user_id}, week ${bcSession.week_key})...`);
+      const localPaths = [];
+      let mergedPath;
+      let durationSeconds = bcSession.duration_seconds;
+
+      if (info.hasFinal) {
+        const { stream } = await r2.getObjectStream(`bodycam/${id}/final.webm`);
+        mergedPath = video.tempPath('webm');
+        localPaths.push(mergedPath);
+        await new Promise((resolve, reject) => {
+          const out = fs.createWriteStream(mergedPath);
+          stream.pipe(out);
+          stream.on('error', reject);
+          out.on('finish', resolve);
+          out.on('error', reject);
+        });
+        if (!durationSeconds) {
+          // No chunk count on record for a pre-existing final.webm - fall
+          // back to an estimate from the file's size at the app's standard
+          // bitrate rather than leaving it at 0.
+          durationSeconds = Math.round(fs.statSync(mergedPath).size / (300000 / 8));
+        }
+      } else {
+        const sortedChunkKeys = info.chunkKeys.slice().sort();
+        const chunkPaths = await Promise.all(sortedChunkKeys.map(async key => {
+          const { stream } = await r2.getObjectStream(key);
+          const localPath = video.tempPath('webm');
+          await new Promise((resolve, reject) => {
+            const out = fs.createWriteStream(localPath);
+            stream.pipe(out);
+            stream.on('error', reject);
+            out.on('finish', resolve);
+            out.on('error', reject);
+          });
+          return localPath;
+        }));
+        localPaths.push(...chunkPaths);
+        const merged = await video.mergeChunksToWebm(chunkPaths);
+        mergedPath = merged.path;
+        localPaths.push(mergedPath);
+        if (!durationSeconds) durationSeconds = sortedChunkKeys.length * (BODYCAM_SEGMENT_MS / 1000);
+      }
+
+      const seedKey = `${bcSession.user_id}:${bcSession.week_key}`;
+      if (!(seedKey in seedCounts)) {
+        const row = db.prepare("SELECT COUNT(*) AS c FROM bodycam_sessions WHERE user_id = ? AND week_key = ? AND status = 'ready' AND discord_channel_id IS NOT NULL").get(bcSession.user_id, bcSession.week_key);
+        seedCounts[seedKey] = row?.c || 0;
+      }
+      const shiftNumber = ++seedCounts[seedKey];
+
+      const { channelId, messageIds } = await postShiftVideoToDiscord(db, bcSession, mergedPath, durationSeconds, shiftNumber);
+
+      db.prepare(`
+        UPDATE bodycam_sessions
+        SET status = 'ready', duration_seconds = ?, discord_channel_id = ?, discord_message_ids = ?
+        WHERE id = ?
+      `).run(durationSeconds || 0, channelId, JSON.stringify(messageIds), id);
+
+      localPaths.forEach(p => { try { fs.unlinkSync(p); } catch (e) {} });
+
+      await r2.deleteObjects(info.keys);
+      log(`  -> posted as Shift Log #${shiftNumber} in <#${channelId}>, ${info.keys.length} R2 object(s) freed.`);
+      migrated.push({ id, userId: bcSession.user_id, channelId, shiftNumber, objectsDeleted: info.keys.length });
+    } catch (e) {
+      console.error('[BODYCAM MIGRATION ERROR]', id, e);
+      log(`  -> FAILED: ${e.message} - leaving its R2 data in place for retry.`);
+      failed.push({ id, error: e.message });
+    }
+  }
+
+  let orphanedDeleted = 0;
+  for (const { id, info } of orphaned) {
+    try {
+      await r2.deleteObjects(info.keys);
+      orphanedDeleted += info.keys.length;
+      log(`Deleted orphaned R2 data for ${id} (${info.keys.length} object(s)) - no database record, could not attribute to an officer.`);
+    } catch (e) {
+      log(`Failed to delete orphaned data for ${id}: ${e.message}`);
+    }
+  }
+
+  await refreshBodycamStorageTotal();
+  log(`Done. Migrated ${migrated.length}, failed ${failed.length}, orphaned-and-deleted ${orphaned.length} (${orphanedDeleted} objects). Remaining R2 usage: ${(bodycamStorageBytes / 1024 / 1024).toFixed(2)}MB.`);
+
+  bodycamMigrationState.status = 'done';
+  bodycamMigrationState.finishedAt = Date.now();
+  bodycamMigrationState.result = { migrated, failed, orphaned: orphaned.map(o => o.id), orphanedObjectsDeleted: orphanedDeleted, remainingBytes: bodycamStorageBytes };
 }
 
 // Bodycam recordings expire when the weekly quota resets, same as the user
@@ -1428,8 +1581,8 @@ const server = http.createServer(async (req, res) => {
 
   // API: POST /api/admin/reset-quota-logs (Command Only - wipe weekly quota
   // totals and shift history for a clean slate. Does not touch active
-  // sessions, staff roster, or bodycam recordings already in R2 - those
-  // still clean themselves up on the normal weekly expiry schedule.)
+  // sessions, the staff roster, or bodycam video logs on Discord - those
+  // clear on their own normal weekly schedule.)
   if (pathname === '/api/admin/reset-quota-logs' && req.method === 'POST') {
     if (!currentSession || !currentSession.permissions.isCommand) {
       return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
@@ -1448,6 +1601,36 @@ const server = http.createServer(async (req, res) => {
       console.error('[QUOTA RESET ERROR]', e.message);
       return sendJSON(res, 500, { error: 'Failed to reset quota logs' });
     }
+  }
+
+  // API: POST /api/admin/migrate-bodycam-to-discord (Command Only - one-time
+  // backfill for videos that were archived to R2 before the Discord-native
+  // video log existed: posts each one to its officer's channel, then wipes
+  // it from R2 once posted. Runs in the background - some of these files are
+  // hundreds of MB, so this responds immediately and the companion GET
+  // below reports progress/results.)
+  if (pathname === '/api/admin/migrate-bodycam-to-discord' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    if (bodycamMigrationState.status === 'running') {
+      return sendJSON(res, 409, { error: 'A migration is already running - check status first.' });
+    }
+    migrateR2BodycamToDiscordAndReset().catch(err => {
+      console.error('[BODYCAM MIGRATION ERROR]', err);
+      bodycamMigrationState.status = 'failed';
+      bodycamMigrationState.finishedAt = Date.now();
+      bodycamMigrationState.log.push({ t: Date.now(), msg: 'Fatal error: ' + err.message });
+    });
+    return sendJSON(res, 200, { started: true });
+  }
+
+  // API: GET /api/admin/migrate-bodycam-to-discord/status (Command Only)
+  if (pathname === '/api/admin/migrate-bodycam-to-discord/status' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    return sendJSON(res, 200, bodycamMigrationState);
   }
 
   // API: GET /api/admin/roles (Command Only - list every guild role, live
