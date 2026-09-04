@@ -493,8 +493,12 @@ const server = http.createServer(async (req, res) => {
     // Rate Limiting Protection:
     // General routes: 120 req/min
     // Form/Auth sensitive routes: 10 req/min
+    // Tracked as separate buckets per IP - sharing one counter meant ordinary
+    // page loads (HTML + CSS + assets + background fetches) burned through
+    // the tight sensitive-route ceiling before a sensitive route was ever hit.
     const isSensitive = ['/api/contact/staff', '/api/report', '/api/duty/start', '/auth/discord/callback'].includes(pathname);
-    const limitRule = checkRateLimit(clientIp, isSensitive ? 10 : 120, 60000);
+    const rateLimitKey = `${clientIp}:${isSensitive ? 'sensitive' : 'general'}`;
+    const limitRule = checkRateLimit(rateLimitKey, isSensitive ? 10 : 120, 60000);
     if (!limitRule.allowed) {
       res.writeHead(429, {
         'Content-Type': 'application/json; charset=utf-8',
