@@ -104,6 +104,18 @@
                 <p style="margin-top: 10px; font-size: 10.5px; color: #546675;">
                   * Shift logging requires active in-game presence in <a href="https://www.roblox.com/games/10659924817" target="_blank" rel="noopener">Harrison County</a> on Roblox. Minimum 12 minutes required for weekly quota credit.
                 </p>
+
+                <div id="bodycamPanel" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px dashed #CFD8DC;">
+                  <div style="display: flex; gap: 8px; align-items: center;">
+                    <button type="button" class="period-button" id="btnStartBodycam" onclick="startBodycam()">[ START BODYCAM ]</button>
+                    <button type="button" class="period-button period-button-secondary" id="btnStopBodycam" onclick="stopBodycam()" style="display: none;">[ STOP BODYCAM ]</button>
+                    <span id="bodycamStatusPill" class="status-pill status-pill-yellow" style="display: none;">OFF</span>
+                  </div>
+                  <p id="bodycamNotice" style="margin-top: 8px; font-size: 10.5px; color: #546675; display: none;"></p>
+                  <p style="margin-top: 8px; font-size: 10.5px; color: #546675;">
+                    * When prompted, share the <strong>Roblox window</strong>, not your full screen - the browser's picker is the only thing that can restrict what's shared, so double-check before confirming. Recording saves to the department server, not your PC, and is visible live to Supervisors+ on the Duty Roster tab.
+                  </p>
+                </div>
               </div>
             </section>
 
@@ -181,10 +193,11 @@
                       <th>Clock-In Time</th>
                       <th>Duration</th>
                       <th>Status</th>
+                      <th>Bodycam</th>
                     </tr>
                   </thead>
                   <tbody id="rosterTableBody">
-                    <tr><td colspan="5" class="table-empty-msg">Querying department database...</td></tr>
+                    <tr><td colspan="6" class="table-empty-msg">Querying department database...</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -203,10 +216,11 @@
                       <th>Discord User ID</th>
                       <th>Weekly Total Logged</th>
                       <th>Quota Compliance</th>
+                      <th>Shift Log</th>
                     </tr>
                   </thead>
                   <tbody id="leaderboardTableBody">
-                    <tr><td colspan="5" class="table-empty-msg">Loading quota metrics...</td></tr>
+                    <tr><td colspan="6" class="table-empty-msg">Loading quota metrics...</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -440,6 +454,49 @@
       </article>
     </main>
 
+    <!-- Live Bodycam Viewer (Supervisor+) -->
+    <div id="bodycamLiveModal" style="display: none; position: fixed; inset: 0; background: rgba(15,20,25,0.85); z-index: 500; align-items: center; justify-content: center; padding: 20px;">
+      <div style="background: #fff; max-width: 900px; width: 100%; border: 1px solid #CFD8DC;">
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: #1E252D; color: #fff;">
+          <strong id="bodycamLiveTitle" style="font-size: 12px;">Live Bodycam</strong>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <button type="button" class="period-button period-button-secondary" style="font-size: 9.5px; padding: 3px 10px;" onclick="bodycamLiveFullscreen()">[ FULLSCREEN ]</button>
+            <button type="button" class="period-button period-button-secondary" style="font-size: 9.5px; padding: 3px 10px;" onclick="closeBodycamLive()">[ CLOSE ]</button>
+          </div>
+        </div>
+        <video id="bodycamLiveVideo" style="width: 100%; display: block; background: #000; max-height: 70vh;" autoplay muted playsinline></video>
+        <div style="padding: 8px 14px; font-size: 10.5px; color: #546675;" id="bodycamLiveStatus">Connecting…</div>
+      </div>
+    </div>
+
+    <!-- Shift History / Playback / Trim / Download (Supervisor+ or self) -->
+    <div id="shiftHistoryModal" style="display: none; position: fixed; inset: 0; background: rgba(15,20,25,0.85); z-index: 500; align-items: center; justify-content: center; padding: 20px;">
+      <div style="background: #fff; max-width: 760px; width: 100%; max-height: 88vh; overflow-y: auto; border: 1px solid #CFD8DC;">
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: #1E252D; color: #fff; position: sticky; top: 0;">
+          <strong id="shiftHistoryTitle" style="font-size: 12px;">Shift Log</strong>
+          <button type="button" class="period-button period-button-secondary" style="font-size: 9.5px; padding: 3px 10px;" onclick="closeShiftHistory()">[ CLOSE ]</button>
+        </div>
+        <div style="padding: 14px;">
+          <div id="shiftHistoryList"></div>
+
+          <div id="shiftPlaybackPanel" style="display: none; margin-top: 16px; padding-top: 14px; border-top: 1px dashed #CFD8DC;">
+            <video id="shiftPlaybackVideo" style="width: 100%; background: #000; max-height: 46vh;" controls></video>
+            <div style="display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-top: 10px;">
+              <label style="font-size: 10.5px;">Trim Start (sec)
+                <input type="number" id="trimStartInput" min="0" value="0" style="width: 90px; display: block;" />
+              </label>
+              <label style="font-size: 10.5px;">Trim End (sec)
+                <input type="number" id="trimEndInput" min="0" value="0" style="width: 90px; display: block;" />
+              </label>
+              <button type="button" class="period-button period-button-secondary" style="font-size: 9.5px; padding: 6px 10px;" onclick="exportTrimmedClip()">[ EXPORT TRIMMED CLIP ]</button>
+              <a id="shiftDownloadFullLink" href="#" download class="period-button" style="font-size: 9.5px; padding: 6px 10px;">[ DOWNLOAD FULL RECORDING ]</a>
+            </div>
+            <div id="trimStatus" style="margin-top: 8px; font-size: 10.5px; color: #546675;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <footer class="site-footer">
       <p><strong>Westpoint Security · Officer Duty Station</strong></p>
       <p>Copyright &copy; 2026 Westpoint Security. All Rights Reserved.</p>
@@ -575,6 +632,7 @@
       statusEl.className = 'status-pill status-pill-green';
       pillEl.innerText = 'ON DUTY';
       pillEl.className = 'status-pill status-pill-green';
+      document.getElementById('bodycamPanel').style.display = 'block';
 
       if (shiftInterval) clearInterval(shiftInterval);
       shiftInterval = setInterval(() => {
@@ -598,6 +656,133 @@
       document.getElementById('officerDutyPill').innerText = 'OFF DUTY';
       document.getElementById('officerDutyPill').className = 'status-pill status-pill-yellow';
       document.getElementById('shiftRobloxUser').innerText = '';
+      document.getElementById('bodycamPanel').style.display = 'none';
+    }
+
+    // ============== BODYCAM ==============
+    let bodycamStream = null;
+    let bodycamRecorder = null;
+    let bodycamId = null;
+    let bodycamChunkIndex = 0;
+    let bodycamLastUploadPromise = Promise.resolve();
+
+    function showBodycamNotice(msg, kind) {
+      const el = document.getElementById('bodycamNotice');
+      el.style.display = 'block';
+      el.style.color = kind === 'error' ? '#9E2A2B' : (kind === 'success' ? '#1B5E20' : '#546675');
+      el.innerText = msg;
+    }
+
+    async function startBodycam() {
+      const btnStart = document.getElementById('btnStartBodycam');
+      const btnStop = document.getElementById('btnStopBodycam');
+      const pill = document.getElementById('bodycamStatusPill');
+
+      btnStart.disabled = true;
+      try {
+        const startRes = await fetch('/api/bodycam/start', { method: 'POST' });
+        const startData = await startRes.json();
+        if (!startRes.ok || !startData.success) {
+          showBodycamNotice(startData.error || 'Could not start bodycam session.', 'error');
+          return;
+        }
+        bodycamId = startData.bodycamId;
+
+        let stream;
+        try {
+          // displaySurface: 'window' only hints the browser's picker to
+          // default to the Window tab - it cannot force or restrict the
+          // choice. The officer can still pick "Entire Screen" regardless.
+          stream = await navigator.mediaDevices.getDisplayMedia({
+            video: { displaySurface: 'window' },
+            audio: false
+          });
+        } catch (e) {
+          showBodycamNotice('Screen share was cancelled or denied - bodycam not started.', 'error');
+          bodycamId = null;
+          return;
+        }
+
+        const track = stream.getVideoTracks()[0];
+        const settings = track.getSettings ? track.getSettings() : {};
+        if (settings.displaySurface && settings.displaySurface !== 'window') {
+          showBodycamNotice('Warning: that shared your entire screen, not just the Roblox window. Click Stop Bodycam and restart if that was a mistake.', 'error');
+        } else {
+          showBodycamNotice('Bodycam recording started.', 'success');
+        }
+
+        bodycamStream = stream;
+        bodycamChunkIndex = 0;
+        bodycamRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8' });
+
+        bodycamRecorder.ondataavailable = (e) => {
+          if (!e.data || e.data.size === 0) return;
+          const idx = bodycamChunkIndex++;
+          const activeBodycamId = bodycamId;
+          bodycamLastUploadPromise = fetch(`/api/bodycam/chunk?bodycamId=${encodeURIComponent(activeBodycamId)}&index=${idx}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'video/webm' },
+            body: e.data
+          }).catch(err => console.error('Bodycam chunk upload failed', err));
+        };
+
+        // Covers the officer using the browser's own "Stop sharing" bar
+        // instead of the dashboard's Stop Bodycam button.
+        track.addEventListener('ended', () => {
+          if (bodycamRecorder && bodycamRecorder.state !== 'inactive') stopBodycam();
+        });
+
+        bodycamRecorder.start(5000); // flush a chunk roughly every 5s
+
+        btnStart.style.display = 'none';
+        btnStop.style.display = 'inline-block';
+        pill.style.display = 'inline-block';
+        pill.innerText = '● RECORDING';
+        pill.className = 'status-pill status-pill-green';
+      } catch (err) {
+        showBodycamNotice('Unexpected error starting bodycam.', 'error');
+      } finally {
+        btnStart.disabled = false;
+      }
+    }
+
+    async function stopBodycam() {
+      const btnStart = document.getElementById('btnStartBodycam');
+      const btnStop = document.getElementById('btnStopBodycam');
+      const pill = document.getElementById('bodycamStatusPill');
+      const idToStop = bodycamId;
+
+      pill.innerText = 'FINALIZING…';
+      pill.className = 'status-pill status-pill-yellow';
+
+      await new Promise(resolve => {
+        if (!bodycamRecorder || bodycamRecorder.state === 'inactive') return resolve();
+        bodycamRecorder.addEventListener('stop', resolve, { once: true });
+        bodycamRecorder.stop();
+      });
+      await bodycamLastUploadPromise;
+
+      if (bodycamStream) bodycamStream.getTracks().forEach(t => t.stop());
+      bodycamStream = null;
+      bodycamRecorder = null;
+      bodycamId = null;
+
+      btnStart.style.display = 'inline-block';
+      btnStop.style.display = 'none';
+      pill.style.display = 'none';
+
+      if (idToStop) {
+        try {
+          await fetch('/api/bodycam/stop', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bodycamId: idToStop })
+          });
+          showBodycamNotice('Bodycam stopped - finalizing in the background, it will appear on your shift history shortly.', 'success');
+        } catch (e) {
+          showBodycamNotice('Bodycam stopped, but the server could not be notified - it should still finalize automatically at duty end.', 'error');
+        }
+      }
     }
 
     // Toggle Shift with Backend Roblox Presence Check
@@ -674,6 +859,14 @@
         spinner.style.display = 'inline-block';
         spinner.innerText = 'Finalizing autolog session...';
 
+        // Stop the bodycam (if running) and wait for its last chunk to
+        // finish uploading before ending duty, so the server-side merge
+        // that duty/end can trigger has every chunk to work with.
+        if (bodycamRecorder && bodycamRecorder.state !== 'inactive') {
+          spinner.innerText = 'Stopping bodycam and uploading final segment...';
+          await stopBodycam();
+        }
+
         try {
           const res = await fetch('/api/duty/end', { method: 'POST' });
           const data = await res.json();
@@ -743,31 +936,41 @@
     async function loadDutyRoster() {
       const rosterTable = document.getElementById('rosterTableBody');
       const lbTable = document.getElementById('leaderboardTableBody');
-      rosterTable.innerHTML = '<tr><td colspan="5" class="table-empty-msg">Querying database...</td></tr>';
+      rosterTable.innerHTML = '<tr><td colspan="6" class="table-empty-msg">Querying database...</td></tr>';
 
       try {
         const res = await fetch('/api/duty-roster');
         const data = await res.json();
+        const canWatch = !!officerSession?.permissions?.isSupervisor;
 
         // 1. In-game active officers
         if (!data.activeSessions || data.activeSessions.length === 0) {
-          rosterTable.innerHTML = '<tr><td colspan="5" class="table-empty-msg">No officers currently clocked into Roblox autolog.</td></tr>';
+          rosterTable.innerHTML = '<tr><td colspan="6" class="table-empty-msg">No officers currently clocked into Roblox autolog.</td></tr>';
         } else {
-          rosterTable.innerHTML = data.activeSessions.map(s => `
+          rosterTable.innerHTML = data.activeSessions.map(s => {
+            let bodycamCell = '<span style="font-size: 10px; color: #90A4AE;">Off</span>';
+            if (s.bodycamId) {
+              bodycamCell = canWatch
+                ? `<button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 3px 8px;" onclick="openBodycamLive('${s.bodycamId}', '${escapeHtml(s.robloxUsername).replace(/'/g, "\\'")}')">[ ▶ WATCH LIVE ]</button>`
+                : '<span class="status-pill status-pill-green" style="font-size: 9px;">● REC</span>';
+            }
+            return `
             <tr>
               <td><strong>${escapeHtml(s.robloxUsername)}</strong> <span style="font-size: 10px; color: #666;">(${escapeHtml(s.userId)})</span></td>
               <td>${escapeHtml(s.location)}</td>
               <td style="font-family: monospace;">${new Date(s.startTime).toLocaleTimeString()}</td>
               <td style="font-family: monospace; font-weight: bold; color: #1B5E20;">${escapeHtml(s.elapsedFormatted)}</td>
               <td><span class="status-pill status-pill-green">● IN GAME</span></td>
+              <td>${bodycamCell}</td>
             </tr>
-          `).join('');
+          `;
+          }).join('');
         }
 
         // 2. Weekly leaderboard
         document.getElementById('rosterWeekKey').innerText = data.weekKey || 'Current Week';
         if (!data.weeklyQuotaLeaderboard || data.weeklyQuotaLeaderboard.length === 0) {
-          lbTable.innerHTML = '<tr><td colspan="5" class="table-empty-msg">No weekly duty records logged yet.</td></tr>';
+          lbTable.innerHTML = '<tr><td colspan="6" class="table-empty-msg">No weekly duty records logged yet.</td></tr>';
         } else {
           lbTable.innerHTML = data.weeklyQuotaLeaderboard.map((item, index) => {
             const isTargetMet = item.totalSeconds >= (60 * 60); // 1 hour threshold for example
@@ -782,12 +985,224 @@
                     ${isTargetMet ? 'COMPLIANT' : 'PENDING'}
                   </span>
                 </td>
+                <td>
+                  <button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 3px 8px;" onclick="openShiftHistory('${item.userId}', '${escapeHtml(item.robloxUsername).replace(/'/g, "\\'")}')">[ VIEW ]</button>
+                </td>
               </tr>
             `;
           }).join('');
         }
       } catch (e) {
-        rosterTable.innerHTML = '<tr><td colspan="5" class="table-empty-msg">Unable to load duty roster.</td></tr>';
+        rosterTable.innerHTML = '<tr><td colspan="6" class="table-empty-msg">Unable to load duty roster.</td></tr>';
+      }
+    }
+
+    // ============== LIVE BODYCAM VIEWER (Supervisor+) ==============
+    // Uses MediaSource/SourceBuffer, not a plain <video src> swap: only the
+    // first uploaded chunk carries the WebM header, so later chunks have to
+    // be appended to a live stream buffer to play at all.
+    let bodycamLivePollTimer = null;
+    let bodycamLiveMediaSource = null;
+    let bodycamLiveSourceBuffer = null;
+    let bodycamLiveQueue = [];
+    let bodycamLiveLastIndex = -1;
+    let bodycamLiveId = null;
+
+    function openBodycamLive(bcId, officerName) {
+      bodycamLiveId = bcId;
+      bodycamLiveLastIndex = -1;
+      bodycamLiveQueue = [];
+      document.getElementById('bodycamLiveTitle').innerText = 'Live Bodycam — ' + officerName;
+      document.getElementById('bodycamLiveStatus').innerText = 'Connecting…';
+      document.getElementById('bodycamLiveModal').style.display = 'flex';
+
+      const liveVideo = document.getElementById('bodycamLiveVideo');
+      bodycamLiveMediaSource = new MediaSource();
+      liveVideo.src = URL.createObjectURL(bodycamLiveMediaSource);
+
+      bodycamLiveMediaSource.addEventListener('sourceopen', () => {
+        try {
+          bodycamLiveSourceBuffer = bodycamLiveMediaSource.addSourceBuffer('video/webm;codecs="vp8"');
+          bodycamLiveSourceBuffer.addEventListener('updateend', pumpBodycamLiveQueue);
+        } catch (e) {
+          document.getElementById('bodycamLiveStatus').innerText = 'This browser cannot play the live feed (codec unsupported).';
+        }
+      }, { once: true });
+
+      pollBodycamLive();
+      bodycamLivePollTimer = setInterval(pollBodycamLive, 4000);
+    }
+
+    async function pollBodycamLive() {
+      if (!bodycamLiveId) return;
+      try {
+        const res = await fetch(`/api/bodycam/${encodeURIComponent(bodycamLiveId)}/chunks?since=${bodycamLiveLastIndex}`);
+        if (!res.ok) {
+          document.getElementById('bodycamLiveStatus').innerText = 'Feed unavailable.';
+          return;
+        }
+        const data = await res.json();
+        for (const chunk of data.chunks) {
+          const chunkRes = await fetch(chunk.url);
+          const buf = await chunkRes.arrayBuffer();
+          bodycamLiveQueue.push(buf);
+          bodycamLiveLastIndex = Math.max(bodycamLiveLastIndex, chunk.index);
+        }
+        document.getElementById('bodycamLiveStatus').innerText = data.status === 'recording'
+          ? 'Live — a few seconds behind real time'
+          : 'Recording has ended.';
+        pumpBodycamLiveQueue();
+        if (data.status !== 'recording' && bodycamLivePollTimer) {
+          clearInterval(bodycamLivePollTimer);
+          bodycamLivePollTimer = null;
+        }
+      } catch (e) {
+        console.error('Bodycam live poll error', e);
+      }
+    }
+
+    function pumpBodycamLiveQueue() {
+      if (!bodycamLiveSourceBuffer || bodycamLiveSourceBuffer.updating || bodycamLiveQueue.length === 0) return;
+      const next = bodycamLiveQueue.shift();
+      try {
+        bodycamLiveSourceBuffer.appendBuffer(next);
+      } catch (e) {
+        console.error('Bodycam appendBuffer error', e);
+      }
+    }
+
+    function closeBodycamLive() {
+      if (bodycamLivePollTimer) clearInterval(bodycamLivePollTimer);
+      bodycamLivePollTimer = null;
+      bodycamLiveId = null;
+      bodycamLiveSourceBuffer = null;
+      bodycamLiveMediaSource = null;
+      bodycamLiveQueue = [];
+      document.getElementById('bodycamLiveModal').style.display = 'none';
+      document.getElementById('bodycamLiveVideo').src = '';
+    }
+
+    function bodycamLiveFullscreen() {
+      const liveVideo = document.getElementById('bodycamLiveVideo');
+      if (liveVideo.requestFullscreen) liveVideo.requestFullscreen();
+    }
+
+    // ============== SHIFT HISTORY / PLAYBACK / TRIM ==============
+    let shiftHistoryActiveBodycamId = null;
+
+    async function openShiftHistory(userId, robloxUsername) {
+      document.getElementById('shiftHistoryTitle').innerText = 'Shift Log — ' + (robloxUsername || userId);
+      document.getElementById('shiftHistoryList').innerHTML = '<p style="font-size: 11px; color: #546675;">Loading shifts…</p>';
+      document.getElementById('shiftPlaybackPanel').style.display = 'none';
+      document.getElementById('shiftHistoryModal').style.display = 'flex';
+
+      try {
+        const res = await fetch(`/api/officer/${encodeURIComponent(userId)}/shifts`);
+        const data = await res.json();
+        if (!res.ok) {
+          document.getElementById('shiftHistoryList').innerHTML = '<p style="font-size: 11px; color: #9E2A2B;">' + escapeHtml(data.error || 'Failed to load shifts.') + '</p>';
+          return;
+        }
+        if (!data.shifts || data.shifts.length === 0) {
+          document.getElementById('shiftHistoryList').innerHTML = '<p style="font-size: 11px; color: #546675;">No logged shifts yet.</p>';
+          return;
+        }
+        document.getElementById('shiftHistoryList').innerHTML = data.shifts.map(s => {
+          let bcButton = '<span style="font-size: 10px; color: #90A4AE;">No bodycam</span>';
+          if (s.bodycam) {
+            if (s.bodycam.status === 'ready') {
+              bcButton = `<button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 3px 8px;" onclick="watchShiftRecording('${s.bodycam.id}')">[ WATCH / DOWNLOAD ]</button>`;
+            } else if (s.bodycam.status === 'processing') {
+              bcButton = '<span class="status-pill status-pill-yellow" style="font-size: 9px;">PROCESSING</span>';
+            } else if (s.bodycam.status === 'expired') {
+              bcButton = '<span style="font-size: 10px; color: #90A4AE;">Expired</span>';
+            } else if (s.bodycam.status === 'failed') {
+              bcButton = '<span class="status-pill status-pill-red" style="font-size: 9px;">FAILED</span>';
+            } else {
+              bcButton = '<span style="font-size: 10px; color: #90A4AE;">Recording…</span>';
+            }
+          }
+          return `
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #ECEFF1; font-size: 11.5px;">
+              <div>
+                <strong>${new Date(s.startTime).toLocaleDateString()}</strong>
+                <span style="color: #546675;"> ${new Date(s.startTime).toLocaleTimeString()} → ${new Date(s.endTime).toLocaleTimeString()}</span>
+                <div style="font-family: monospace; font-size: 10.5px; color: #2D3942;">${escapeHtml(s.durationFormatted)} · Week ${escapeHtml(s.weekKey)}</div>
+              </div>
+              <div>${bcButton}</div>
+            </div>
+          `;
+        }).join('');
+      } catch (e) {
+        document.getElementById('shiftHistoryList').innerHTML = '<p style="font-size: 11px; color: #9E2A2B;">Network error loading shifts.</p>';
+      }
+    }
+
+    function closeShiftHistory() {
+      document.getElementById('shiftHistoryModal').style.display = 'none';
+      const playbackVideo = document.getElementById('shiftPlaybackVideo');
+      playbackVideo.pause();
+      playbackVideo.src = '';
+      shiftHistoryActiveBodycamId = null;
+    }
+
+    async function watchShiftRecording(bcId) {
+      const panel = document.getElementById('shiftPlaybackPanel');
+      const playbackVideo = document.getElementById('shiftPlaybackVideo');
+      const trimStatus = document.getElementById('trimStatus');
+      trimStatus.innerText = '';
+      panel.style.display = 'block';
+      panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+      try {
+        const res = await fetch(`/api/bodycam/${encodeURIComponent(bcId)}/playback`);
+        const data = await res.json();
+        if (!res.ok) {
+          trimStatus.style.color = '#9E2A2B';
+          trimStatus.innerText = data.error || 'Could not load recording.';
+          return;
+        }
+        shiftHistoryActiveBodycamId = bcId;
+        playbackVideo.src = data.url;
+        document.getElementById('shiftDownloadFullLink').href = data.downloadUrl || data.url;
+        document.getElementById('trimStartInput').value = 0;
+        document.getElementById('trimEndInput').value = data.durationSeconds || 0;
+      } catch (e) {
+        trimStatus.style.color = '#9E2A2B';
+        trimStatus.innerText = 'Network error loading recording.';
+      }
+    }
+
+    async function exportTrimmedClip() {
+      if (!shiftHistoryActiveBodycamId) return;
+      const trimStatus = document.getElementById('trimStatus');
+      const startSeconds = Number(document.getElementById('trimStartInput').value) || 0;
+      const endSeconds = Number(document.getElementById('trimEndInput').value) || 0;
+      if (endSeconds <= startSeconds) {
+        trimStatus.style.color = '#9E2A2B';
+        trimStatus.innerText = 'End time must be after start time.';
+        return;
+      }
+
+      trimStatus.style.color = '#546675';
+      trimStatus.innerText = 'Trimming clip on the server…';
+      try {
+        const res = await fetch(`/api/bodycam/${encodeURIComponent(shiftHistoryActiveBodycamId)}/trim`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ startSeconds, endSeconds })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          trimStatus.style.color = '#9E2A2B';
+          trimStatus.innerText = data.error || 'Trim failed.';
+          return;
+        }
+        trimStatus.style.color = '#1B5E20';
+        trimStatus.innerHTML = 'Clip ready: <a href="' + data.url + '" target="_blank" rel="noopener">[ DOWNLOAD TRIMMED CLIP ]</a>';
+      } catch (e) {
+        trimStatus.style.color = '#9E2A2B';
+        trimStatus.innerText = 'Network error trimming clip.';
       }
     }
 

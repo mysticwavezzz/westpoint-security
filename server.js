@@ -17,6 +17,8 @@ const PUBLIC_DIR = fs.existsSync(path.join(BASE_DIR, 'public')) ? path.join(BASE
 // container's ephemeral disk, which gets wiped on every deploy otherwise.
 const DATA_DIR = process.env.DATA_DIR || path.join(BASE_DIR, 'data');
 const robloxService = require('./lib/robloxService.js');
+const r2 = require('./lib/r2.js');
+const video = require('./lib/video.js');
 // Shared with the Discord bot (resilient-meitner). That bot currently only
 // runs on this machine, so this only resolves where the bot's SQLite file is
 // actually reachable on disk — override with BOT_DB_PATH in .env for any
@@ -106,7 +108,11 @@ const SECURITY_HEADERS = {
   'X-XSS-Protection': '1; mode=block',
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
-  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' https://discord.com https://cdn.discordapp.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://cdn.discordapp.com; font-src 'self'; connect-src 'self' https://discord.com https://*.roblox.com; frame-ancestors 'none';"
+  // media-src/connect-src include R2 (*.r2.cloudflarestorage.com) since
+  // bodycam chunks and playback are fetched directly from presigned R2 URLs,
+  // not proxied through this server - without this the browser silently
+  // blocks every one of those requests as a CSP violation.
+  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' https://discord.com https://cdn.discordapp.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://cdn.discordapp.com; font-src 'self'; media-src 'self' blob: https://*.r2.cloudflarestorage.com; connect-src 'self' https://discord.com https://*.roblox.com https://*.r2.cloudflarestorage.com; frame-ancestors 'none';"
 };
 
 // In-memory active officer web sessions
@@ -259,7 +265,32 @@ function getBotDb() {
         week_key TEXT PRIMARY KEY,
         audited_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS shift_history (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        roblox_username TEXT,
+        start_time INTEGER NOT NULL,
+        end_time INTEGER NOT NULL,
+        duration_seconds INTEGER NOT NULL,
+        week_key TEXT NOT NULL,
+        bodycam_id TEXT
+      );
+      CREATE TABLE IF NOT EXISTS bodycam_sessions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        week_key TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'recording',
+        chunk_count INTEGER NOT NULL DEFAULT 0,
+        started_at INTEGER NOT NULL,
+        finished_at INTEGER,
+        duration_seconds INTEGER,
+        error TEXT
+      );
     `);
+    // Older bot.db files predate the bodycam_id column on active_sessions.
+    try {
+      botDbInstance.exec('ALTER TABLE active_sessions ADD COLUMN bodycam_id TEXT');
+    } catch (e) {} // already exists
     return botDbInstance;
   } catch (e) {
     console.error('[DATABASE CONNECT ERROR]', e.message);
@@ -286,6 +317,40 @@ function sendJSON(res, status, data, headers = {}) {
     ...headers
   });
   res.end(JSON.stringify(data));
+}
+
+// Bodycam chunks are binary video blobs, not JSON, and much larger than the
+// 64KB cap every other endpoint uses - a raw Buffer reader with its own
+// (much bigger, since a few seconds of screen-share video isn't tiny) limit.
+function readRawBody(req, maxBytes = 25 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let bytesReceived = 0;
+    let exceeded = false;
+
+    req.on('data', chunk => {
+      if (exceeded) return;
+      bytesReceived += chunk.length;
+      if (bytesReceived > maxBytes) {
+        exceeded = true;
+        req.pause();
+        const err = new Error('PAYLOAD_TOO_LARGE');
+        err.code = 'PAYLOAD_TOO_LARGE';
+        reject(err);
+        return;
+      }
+      chunks.push(chunk);
+    });
+
+    req.on('end', () => {
+      if (exceeded) return;
+      resolve(Buffer.concat(chunks));
+    });
+
+    req.on('error', () => {
+      if (!exceeded) resolve(Buffer.concat(chunks));
+    });
+  });
 }
 
 function parseBody(req, maxBytes = 64 * 1024) {
@@ -516,6 +581,68 @@ async function revalidateSession(sessionId, session) {
   return session;
 }
 
+// Downloads every uploaded chunk for a finished bodycam session, merges them
+// into one mp4 with ffmpeg, uploads the result, and drops the now-redundant
+// chunk objects. Runs after the response to /api/bodycam/stop has already
+// gone out - a multi-hour shift's worth of video can take a while to
+// transcode, and the officer shouldn't have to wait on that HTTP request.
+async function finalizeBodycamSession(bodycamId) {
+  const db = getBotDb();
+  const chunkKeys = await r2.listObjects(`bodycam/${bodycamId}/chunk-`);
+  if (chunkKeys.length === 0) {
+    db.prepare("UPDATE bodycam_sessions SET status = 'ready', duration_seconds = 0 WHERE id = ?").run(bodycamId);
+    return;
+  }
+
+  const localChunkPaths = [];
+  try {
+    for (const key of chunkKeys) {
+      const { stream } = await r2.getObjectStream(key);
+      const localPath = video.tempPath('webm');
+      await new Promise((resolve, reject) => {
+        const out = fs.createWriteStream(localPath);
+        stream.pipe(out);
+        stream.on('error', reject);
+        out.on('finish', resolve);
+        out.on('error', reject);
+      });
+      localChunkPaths.push(localPath);
+    }
+
+    const { path: mergedPath, durationSeconds } = await video.mergeChunksToMp4(localChunkPaths);
+    try {
+      await r2.putObject(`bodycam/${bodycamId}/final.mp4`, fs.readFileSync(mergedPath), 'video/mp4');
+    } finally {
+      try { fs.unlinkSync(mergedPath); } catch (e) {}
+    }
+
+    await r2.deleteObjects(chunkKeys);
+    db.prepare("UPDATE bodycam_sessions SET status = 'ready', duration_seconds = ? WHERE id = ?").run(durationSeconds || 0, bodycamId);
+  } finally {
+    localChunkPaths.forEach(p => { try { fs.unlinkSync(p); } catch (e) {} });
+  }
+}
+
+// Bodycam recordings expire when the weekly quota resets (Monday), same as
+// the user asked for - keeps R2 storage bounded without indefinite retention.
+setInterval(async () => {
+  try {
+    const db = getBotDb();
+    if (!db || !r2.isConfigured()) return;
+    const currentWeek = getWeekKey();
+    const stale = db.prepare("SELECT id FROM bodycam_sessions WHERE status = 'ready' AND week_key != ?").all(currentWeek);
+    for (const row of stale) {
+      try {
+        const keys = await r2.listObjects(`bodycam/${row.id}/`);
+        if (keys.length) await r2.deleteObjects(keys);
+        db.prepare("UPDATE bodycam_sessions SET status = 'expired' WHERE id = ?").run(row.id);
+      } catch (e) {
+        console.error('[BODYCAM EXPIRY ERROR]', row.id, e.message);
+      }
+    }
+  } catch (e) {}
+}, 60 * 60 * 1000);
+
 const server = http.createServer(async (req, res) => {
   try {
     // Extract client IP address (supporting reverse proxies like Railway/Cloudflare).
@@ -725,7 +852,8 @@ const server = http.createServer(async (req, res) => {
             startTime: r.start_time,
             elapsedSeconds: elapsedSec,
             elapsedFormatted: formatDuration(elapsedSec),
-            location: 'Harrison County'
+            location: 'Harrison County',
+            bodycamId: r.bodycam_id || null
           });
         });
 
@@ -1061,7 +1189,8 @@ const server = http.createServer(async (req, res) => {
             startTime: row.start_time,
             elapsedSeconds: elapsedSec,
             robloxUsername: row.roblox_username,
-            robloxId: row.roblox_id
+            robloxId: row.roblox_id,
+            bodycamId: row.bodycam_id || null
           });
         }
       } catch (e) {
@@ -1162,6 +1291,39 @@ const server = http.createServer(async (req, res) => {
     let logged = false;
     let newWeeklyTotalSeconds = 0;
 
+    // Every shift gets a history row regardless of whether it met the
+    // quota-crediting minimum - "every shift they've logged" on the profile
+    // view is a separate concern from whether it counted toward the quota.
+    db.prepare(`
+      INSERT INTO shift_history (id, user_id, roblox_username, start_time, end_time, duration_seconds, week_key, bodycam_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'SHIFT-' + crypto.randomBytes(8).toString('hex'),
+      currentSession.id,
+      session.roblox_username || null,
+      session.start_time,
+      now,
+      elapsedSeconds,
+      weekKey,
+      session.bodycam_id || null
+    );
+
+    // Safety net: if the officer ends duty without explicitly stopping the
+    // bodycam first, finalize it here too rather than leaving it recording
+    // against a shift that's already over.
+    if (session.bodycam_id) {
+      const bcSession = db.prepare('SELECT * FROM bodycam_sessions WHERE id = ?').get(session.bodycam_id);
+      if (bcSession && bcSession.status === 'recording') {
+        db.prepare("UPDATE bodycam_sessions SET status = 'processing', finished_at = ? WHERE id = ?").run(now, session.bodycam_id);
+        finalizeBodycamSession(session.bodycam_id).catch(err => {
+          console.error('[BODYCAM FINALIZE ERROR]', session.bodycam_id, err.message);
+          try {
+            getBotDb()?.prepare("UPDATE bodycam_sessions SET status = 'failed', error = ? WHERE id = ?").run(err.message.slice(0, 500), session.bodycam_id);
+          } catch (e) {}
+        });
+      }
+    }
+
     if (elapsedMs >= minDurationMs) {
       db.prepare(`
         INSERT INTO weekly_totals (user_id, week_key, total_seconds)
@@ -1198,6 +1360,227 @@ const server = http.createServer(async (req, res) => {
       durationFormatted: formatDuration(elapsedSeconds),
       weeklyTotalFormatted: formatDuration(newWeeklyTotalSeconds),
       message: logged ? 'Shift ended and logged to weekly quota!' : `Shift lasted ${formatDuration(elapsedSeconds)}, which is under the 12-minute requirement (discarded).`
+    });
+  }
+
+  // ===============================================================
+  // BODYCAM: chunked live recording -> R2, near-live viewing for
+  // Supervisors+, end-of-shift merge, archive playback/trim/download.
+  // ===============================================================
+
+  // API: POST /api/bodycam/start (Officer, must already be on duty)
+  if (pathname === '/api/bodycam/start' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
+    if (!r2.isConfigured()) return sendJSON(res, 503, { error: 'Bodycam storage is not configured yet.' });
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+
+    const activeShift = db.prepare('SELECT * FROM active_sessions WHERE user_id = ?').get(currentSession.id);
+    if (!activeShift) return sendJSON(res, 400, { error: 'Start your duty shift before starting your bodycam.' });
+    if (activeShift.bodycam_id) {
+      return sendJSON(res, 200, { success: true, bodycamId: activeShift.bodycam_id, alreadyActive: true });
+    }
+
+    const bodycamId = 'BC-' + crypto.randomBytes(8).toString('hex');
+    db.prepare(`
+      INSERT INTO bodycam_sessions (id, user_id, week_key, status, chunk_count, started_at)
+      VALUES (?, ?, ?, 'recording', 0, ?)
+    `).run(bodycamId, currentSession.id, getWeekKey(), Date.now());
+    db.prepare('UPDATE active_sessions SET bodycam_id = ? WHERE user_id = ?').run(bodycamId, currentSession.id);
+
+    return sendJSON(res, 200, { success: true, bodycamId });
+  }
+
+  // API: POST /api/bodycam/chunk?bodycamId=X&index=N (Officer, raw video/webm body)
+  if (pathname === '/api/bodycam/chunk' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
+    const bodycamId = parsedUrl.query.bodycamId;
+    const chunkIndex = parseInt(parsedUrl.query.index, 10);
+    if (!bodycamId || Number.isNaN(chunkIndex)) return sendJSON(res, 400, { error: 'Missing bodycamId or index' });
+
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+    const bcSession = db.prepare('SELECT * FROM bodycam_sessions WHERE id = ?').get(bodycamId);
+    if (!bcSession || bcSession.user_id !== currentSession.id) return sendJSON(res, 403, { error: 'Not your bodycam session' });
+    if (bcSession.status !== 'recording') return sendJSON(res, 409, { error: 'This bodycam session is no longer recording' });
+
+    let chunkBody;
+    try {
+      chunkBody = await readRawBody(req);
+    } catch (e) {
+      return sendJSON(res, 413, { error: 'Chunk too large' });
+    }
+    if (!chunkBody || chunkBody.length === 0) return sendJSON(res, 400, { error: 'Empty chunk' });
+
+    try {
+      await r2.putObject(`bodycam/${bodycamId}/chunk-${String(chunkIndex).padStart(6, '0')}.webm`, chunkBody, 'video/webm');
+      db.prepare('UPDATE bodycam_sessions SET chunk_count = chunk_count + 1 WHERE id = ?').run(bodycamId);
+    } catch (e) {
+      console.error('[BODYCAM CHUNK UPLOAD ERROR]', e.message);
+      return sendJSON(res, 500, { error: 'Failed to store chunk' });
+    }
+
+    return sendJSON(res, 200, { success: true });
+  }
+
+  // API: POST /api/bodycam/stop (Officer - finalize & merge runs in the background)
+  if (pathname === '/api/bodycam/stop' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
+    const stopBody = await parseBody(req);
+    const bodycamId = stopBody.bodycamId;
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+    const bcSession = db.prepare('SELECT * FROM bodycam_sessions WHERE id = ?').get(bodycamId);
+    if (!bcSession || bcSession.user_id !== currentSession.id) return sendJSON(res, 403, { error: 'Not your bodycam session' });
+
+    if (bcSession.status === 'recording') {
+      db.prepare("UPDATE bodycam_sessions SET status = 'processing', finished_at = ? WHERE id = ?").run(Date.now(), bodycamId);
+      finalizeBodycamSession(bodycamId).catch(err => {
+        console.error('[BODYCAM FINALIZE ERROR]', bodycamId, err.message);
+        try {
+          getBotDb()?.prepare("UPDATE bodycam_sessions SET status = 'failed', error = ? WHERE id = ?").run(err.message.slice(0, 500), bodycamId);
+        } catch (e) {}
+      });
+    }
+
+    return sendJSON(res, 200, { success: true, status: 'processing' });
+  }
+
+  // API: GET /api/bodycam/:id/status
+  if (pathname.startsWith('/api/bodycam/') && pathname.endsWith('/status') && req.method === 'GET') {
+    if (!currentSession) return sendJSON(res, 401, { error: 'Unauthorized' });
+    const bodycamId = pathname.split('/')[3];
+    const db = getBotDb();
+    const bcSession = db && db.prepare('SELECT * FROM bodycam_sessions WHERE id = ?').get(bodycamId);
+    if (!bcSession) return sendJSON(res, 404, { error: 'Not found' });
+    if (bcSession.user_id !== currentSession.id && !currentSession.permissions.isSupervisor) {
+      return sendJSON(res, 403, { error: 'Access denied' });
+    }
+    return sendJSON(res, 200, {
+      status: bcSession.status,
+      chunkCount: bcSession.chunk_count,
+      durationSeconds: bcSession.duration_seconds,
+      error: bcSession.error || null
+    });
+  }
+
+  // API: GET /api/bodycam/:id/chunks?since=N (Supervisor+ or self - near-live viewer polling)
+  if (pathname.startsWith('/api/bodycam/') && pathname.endsWith('/chunks') && req.method === 'GET') {
+    if (!currentSession) return sendJSON(res, 401, { error: 'Unauthorized' });
+    const bodycamId = pathname.split('/')[3];
+    const db = getBotDb();
+    const bcSession = db && db.prepare('SELECT * FROM bodycam_sessions WHERE id = ?').get(bodycamId);
+    if (!bcSession) return sendJSON(res, 404, { error: 'Not found' });
+    if (bcSession.user_id !== currentSession.id && !currentSession.permissions.isSupervisor) {
+      return sendJSON(res, 403, { error: 'Access denied' });
+    }
+    const since = parseInt(parsedUrl.query.since, 10);
+    const sinceIndex = Number.isNaN(since) ? -1 : since;
+    try {
+      const keys = await r2.listObjects(`bodycam/${bodycamId}/chunk-`);
+      const withIndex = keys
+        .map(k => ({ key: k, index: parseInt((k.match(/chunk-(\d+)\.webm$/) || [])[1] || '-1', 10) }))
+        .filter(k => k.index > sinceIndex)
+        .sort((a, b) => a.index - b.index);
+      const chunks = await Promise.all(withIndex.map(async k => ({
+        index: k.index,
+        url: await r2.presignedGetUrl(k.key, 300)
+      })));
+      return sendJSON(res, 200, { chunks, status: bcSession.status });
+    } catch (e) {
+      console.error('[BODYCAM CHUNKS LIST ERROR]', e.message);
+      return sendJSON(res, 500, { error: 'Failed to list chunks' });
+    }
+  }
+
+  // API: GET /api/bodycam/:id/playback (Supervisor+ or self - finished recording)
+  if (pathname.startsWith('/api/bodycam/') && pathname.endsWith('/playback') && req.method === 'GET') {
+    if (!currentSession) return sendJSON(res, 401, { error: 'Unauthorized' });
+    const bodycamId = pathname.split('/')[3];
+    const db = getBotDb();
+    const bcSession = db && db.prepare('SELECT * FROM bodycam_sessions WHERE id = ?').get(bodycamId);
+    if (!bcSession) return sendJSON(res, 404, { error: 'Not found' });
+    if (bcSession.user_id !== currentSession.id && !currentSession.permissions.isSupervisor) {
+      return sendJSON(res, 403, { error: 'Access denied' });
+    }
+    if (bcSession.status !== 'ready') return sendJSON(res, 409, { error: `Recording is ${bcSession.status}, not ready yet.` });
+    try {
+      const key = `bodycam/${bodycamId}/final.mp4`;
+      const playbackUrl = await r2.presignedGetUrl(key, 3600);
+      const downloadUrl = await r2.presignedGetUrl(key, 3600, `bodycam-${bodycamId}.mp4`);
+      return sendJSON(res, 200, { url: playbackUrl, downloadUrl, durationSeconds: bcSession.duration_seconds });
+    } catch (e) {
+      return sendJSON(res, 500, { error: 'Failed to generate playback link' });
+    }
+  }
+
+  // API: POST /api/bodycam/:id/trim (Supervisor+ or self)
+  if (pathname.startsWith('/api/bodycam/') && pathname.endsWith('/trim') && req.method === 'POST') {
+    if (!currentSession) return sendJSON(res, 401, { error: 'Unauthorized' });
+    const bodycamId = pathname.split('/')[3];
+    const db = getBotDb();
+    const bcSession = db && db.prepare('SELECT * FROM bodycam_sessions WHERE id = ?').get(bodycamId);
+    if (!bcSession) return sendJSON(res, 404, { error: 'Not found' });
+    if (bcSession.user_id !== currentSession.id && !currentSession.permissions.isSupervisor) {
+      return sendJSON(res, 403, { error: 'Access denied' });
+    }
+    if (bcSession.status !== 'ready') return sendJSON(res, 409, { error: `Recording is ${bcSession.status}, not ready yet.` });
+
+    const trimBody = await parseBody(req);
+    const startSeconds = Math.max(0, Number(trimBody.startSeconds) || 0);
+    const endSeconds = Math.max(startSeconds + 1, Number(trimBody.endSeconds) || startSeconds + 1);
+
+    let localFinal, localTrim;
+    try {
+      const { stream } = await r2.getObjectStream(`bodycam/${bodycamId}/final.mp4`);
+      localFinal = video.tempPath('mp4');
+      await new Promise((resolve, reject) => {
+        const out = fs.createWriteStream(localFinal);
+        stream.pipe(out);
+        stream.on('error', reject);
+        out.on('finish', resolve);
+        out.on('error', reject);
+      });
+
+      localTrim = await video.trimMp4(localFinal, startSeconds, endSeconds);
+      const trimKey = `bodycam/${bodycamId}/trim-${Date.now()}.mp4`;
+      await r2.putObject(trimKey, fs.readFileSync(localTrim), 'video/mp4');
+      const url = await r2.presignedGetUrl(trimKey, 3600, `bodycam-${bodycamId}-clip.mp4`);
+      return sendJSON(res, 200, { url });
+    } catch (e) {
+      console.error('[BODYCAM TRIM ERROR]', e.message);
+      return sendJSON(res, 500, { error: 'Failed to trim recording' });
+    } finally {
+      [localFinal, localTrim].forEach(p => { if (p) { try { fs.unlinkSync(p); } catch (e) {} } });
+    }
+  }
+
+  // API: GET /api/officer/:userId/shifts (Supervisor+ or self - shift history + bodycam refs)
+  if (pathname.startsWith('/api/officer/') && pathname.endsWith('/shifts') && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
+    const targetUserId = pathname.split('/')[3];
+    if (targetUserId !== currentSession.id && !currentSession.permissions.isSupervisor) {
+      return sendJSON(res, 403, { error: 'Access denied' });
+    }
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+    const shifts = db.prepare('SELECT * FROM shift_history WHERE user_id = ? ORDER BY start_time DESC LIMIT 200').all(targetUserId);
+    const bodycamIds = shifts.map(s => s.bodycam_id).filter(Boolean);
+    const bodycamMap = {};
+    if (bodycamIds.length) {
+      const placeholders = bodycamIds.map(() => '?').join(',');
+      db.prepare(`SELECT * FROM bodycam_sessions WHERE id IN (${placeholders})`).all(...bodycamIds).forEach(b => { bodycamMap[b.id] = b; });
+    }
+    return sendJSON(res, 200, {
+      shifts: shifts.map(s => ({
+        id: s.id,
+        startTime: s.start_time,
+        endTime: s.end_time,
+        durationSeconds: s.duration_seconds,
+        durationFormatted: formatDuration(s.duration_seconds),
+        weekKey: s.week_key,
+        bodycam: s.bodycam_id ? { id: s.bodycam_id, status: bodycamMap[s.bodycam_id]?.status || 'expired' } : null
+      }))
     });
   }
 
