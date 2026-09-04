@@ -683,12 +683,45 @@
     let bodycamStream = null;
     let bodycamTrack = null;
     let bodycamRecorder = null;
-    let bodycamCycleTimer = null;
-    let bodycamSegmentTimer = null;
+    let bodycamTimerWorker = null;
     let bodycamId = null;
     let bodycamChunkIndex = 0;
     let bodycamLastUploadPromise = Promise.resolve();
     let bodycamStopping = false;
+
+    // Chrome (and other browsers) throttle setInterval/setTimeout on a main
+    // thread that's hidden - down to roughly once a minute after the page
+    // has been backgrounded for ~5 minutes. That's exactly what happens
+    // here: the officer starts the bodycam, then alt-tabs to actually play
+    // Roblox, backgrounding this tab almost immediately - the first clip
+    // fires before that happens, then the 30s cycle stalls. Worker threads
+    // aren't subject to that page-visibility throttling, so the recording
+    // schedule lives there instead; only the actual MediaRecorder start/stop
+    // calls happen back on the main thread, since a Worker can't touch the
+    // stream or DOM directly.
+    function createBodycamTimerWorker() {
+      const workerSrc = `
+        let cycleTimer = null;
+        let segmentTimer = null;
+        onmessage = (e) => {
+          const msg = e.data;
+          if (msg.cmd === 'start') {
+            postMessage({ type: 'segment' });
+            cycleTimer = setInterval(() => postMessage({ type: 'segment' }), msg.cycleMs);
+          } else if (msg.cmd === 'scheduleStop') {
+            if (segmentTimer) clearTimeout(segmentTimer);
+            segmentTimer = setTimeout(() => postMessage({ type: 'stopSegment' }), msg.delayMs);
+          } else if (msg.cmd === 'stop') {
+            if (cycleTimer) clearInterval(cycleTimer);
+            if (segmentTimer) clearTimeout(segmentTimer);
+          }
+        };
+      `;
+      const blobUrl = URL.createObjectURL(new Blob([workerSrc], { type: 'application/javascript' }));
+      const worker = new Worker(blobUrl);
+      URL.revokeObjectURL(blobUrl);
+      return worker;
+    }
 
     function showBodycamNotice(msg, kind) {
       const el = document.getElementById('bodycamNotice');
@@ -764,8 +797,17 @@
           if (!bodycamStopping) stopBodycam();
         });
 
-        recordBodycamSegment();
-        bodycamCycleTimer = setInterval(recordBodycamSegment, BODYCAM_CYCLE_MS);
+        bodycamTimerWorker = createBodycamTimerWorker();
+        bodycamTimerWorker.onmessage = (e) => {
+          if (e.data.type === 'segment') {
+            recordBodycamSegment();
+          } else if (e.data.type === 'stopSegment') {
+            if (bodycamRecorder && bodycamRecorder.state !== 'inactive') bodycamRecorder.stop();
+            const pillEl = document.getElementById('bodycamStatusPill');
+            if (pillEl && !bodycamStopping) { pillEl.innerText = 'IDLE (next clip soon)'; pillEl.className = 'status-pill status-pill-yellow'; }
+          }
+        };
+        bodycamTimerWorker.postMessage({ cmd: 'start', cycleMs: BODYCAM_CYCLE_MS });
 
         btnStart.style.display = 'none';
         btnStop.style.display = 'inline-block';
@@ -809,10 +851,7 @@
 
       recorder.start();
       if (pill) { pill.innerText = '● RECORDING'; pill.className = 'status-pill status-pill-green'; }
-      bodycamSegmentTimer = setTimeout(() => {
-        if (recorder.state !== 'inactive') recorder.stop();
-        if (pill && !bodycamStopping) { pill.innerText = 'IDLE (next clip soon)'; pill.className = 'status-pill status-pill-yellow'; }
-      }, BODYCAM_RECORD_MS);
+      if (bodycamTimerWorker) bodycamTimerWorker.postMessage({ cmd: 'scheduleStop', delayMs: BODYCAM_RECORD_MS });
     }
 
     let bodycamUploadFailureStreak = 0;
@@ -857,8 +896,11 @@
       const idToStop = bodycamId;
       bodycamStopping = true;
 
-      if (bodycamCycleTimer) { clearInterval(bodycamCycleTimer); bodycamCycleTimer = null; }
-      if (bodycamSegmentTimer) { clearTimeout(bodycamSegmentTimer); bodycamSegmentTimer = null; }
+      if (bodycamTimerWorker) {
+        bodycamTimerWorker.postMessage({ cmd: 'stop' });
+        bodycamTimerWorker.terminate();
+        bodycamTimerWorker = null;
+      }
 
       pill.innerText = 'FINALIZING…';
       pill.className = 'status-pill status-pill-yellow';
