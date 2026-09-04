@@ -605,7 +605,11 @@
         } catch (e) {}
 
         if (!data || !data.id || !data.permissions?.isOfficer) {
-          window.location.href = '/employee';
+          // Distinguish "never signed in" from "signed in but lost/never had
+          // staff access" (e.g. Command just revoked the role granting it -
+          // the periodic/forced role re-check on the server picks that up
+          // "as soon as they refresh", which is this page load).
+          window.location.href = data && data.id ? '/employee?error=unauthorized_role' : '/employee';
           return;
         }
 

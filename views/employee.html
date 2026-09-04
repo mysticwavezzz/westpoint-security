@@ -60,7 +60,7 @@
           <div class="content-box-body" style="padding: 24px; text-align: center;">
             <div style="margin: 14px 0;">
               <a id="btnDiscordLogin"
-                 href="/auth/discord"
+                 href="/auth/discord?next=employee"
                  class="period-button period-button-discord"
                  style="font-size: 11px; padding: 10px 24px; cursor: pointer;">
                 [ SIGN IN WITH DISCORD ]
@@ -124,7 +124,7 @@
     if (err) {
       const errBox = document.getElementById('authErrorMsg');
       errBox.style.display = 'block';
-      errBox.innerText = err === 'unauthorized_role' ? 'Access Denied: Security Officer rank required.' : 'Authentication error: ' + err;
+      errBox.innerText = err === 'unauthorized_role' ? "Access Denied: you don't have the required role set for staff access." : 'Authentication error: ' + err;
     }
   </script>
 </body>

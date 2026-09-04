@@ -600,11 +600,23 @@ function fetchGuildRoles() {
 const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000; // matches the wp_session cookie's Max-Age
 const ROLE_RECHECK_INTERVAL_MS = 10 * 60 * 1000;
 
-// Called on every request that carries a session. Two jobs: expire sessions
-// past their 24h TTL (previously only checked once, at process start, so a
-// stolen cookie stayed valid indefinitely for as long as the server kept
-// running), and periodically re-fetch guild roles so a demoted or removed
-// officer loses elevated access within minutes instead of up to 24h.
+// Bumped whenever Command saves a role permissions change (see
+// POST /api/admin/roles below). Comparing a session's lastRoleCheck against
+// this is what makes a permission edit apply "as soon as they refresh"
+// instead of waiting out the normal 10-minute interval - resets on every
+// process restart too, which just means everyone gets one extra re-check
+// right after a deploy, which is harmless.
+let roleConfigUpdatedAt = Date.now();
+
+// Called on every request that carries a session. Three jobs: expire
+// sessions past their 24h TTL (previously only checked once, at process
+// start, so a stolen cookie stayed valid indefinitely for as long as the
+// server kept running), periodically re-fetch guild roles so a demoted or
+// removed officer loses elevated access within minutes instead of up to
+// 24h, and re-check immediately (regardless of the interval) if Command has
+// edited role permissions since this session was last checked. Runs for
+// every session, not just current officers, so a citizen whose role just
+// got granted staff access picks that up too, not just the reverse.
 async function revalidateSession(sessionId, session) {
   const loginTimeMs = session.loginTime ? new Date(session.loginTime).getTime() : 0;
   if (!loginTimeMs || (Date.now() - loginTimeMs) > SESSION_MAX_AGE_MS) {
@@ -613,24 +625,23 @@ async function revalidateSession(sessionId, session) {
     return null;
   }
 
-  if (session.permissions?.isOfficer) {
-    const lastCheckMs = session.lastRoleCheck ? new Date(session.lastRoleCheck).getTime() : 0;
-    if ((Date.now() - lastCheckMs) > ROLE_RECHECK_INTERVAL_MS) {
-      try {
-        const memRes = await fetchGuildMember(session.id);
-        if (memRes.success && memRes.member) {
-          const { permissions, roles, highestRank } = computePermissionsFromDiscordRoles(memRes.member.roles || []);
-          session.roles = roles;
-          session.highestRank = highestRank;
-          session.permissions = permissions;
-        }
-        // On lookup failure (rate limit, network blip) keep the cached
-        // permissions rather than punishing the user for a Discord hiccup.
-      } catch (e) {}
-      session.lastRoleCheck = new Date().toISOString();
-      SESSIONS.set(sessionId, session);
-      persistSessions();
-    }
+  const lastCheckMs = session.lastRoleCheck ? new Date(session.lastRoleCheck).getTime() : 0;
+  const configChangedSinceLastCheck = lastCheckMs < roleConfigUpdatedAt;
+  if (configChangedSinceLastCheck || (Date.now() - lastCheckMs) > ROLE_RECHECK_INTERVAL_MS) {
+    try {
+      const memRes = await fetchGuildMember(session.id);
+      if (memRes.success && memRes.member) {
+        const { permissions, roles, highestRank } = computePermissionsFromDiscordRoles(memRes.member.roles || []);
+        session.roles = roles;
+        session.highestRank = highestRank;
+        session.permissions = permissions;
+      }
+      // On lookup failure (rate limit, network blip) keep the cached
+      // permissions rather than punishing the user for a Discord hiccup.
+    } catch (e) {}
+    session.lastRoleCheck = new Date().toISOString();
+    SESSIONS.set(sessionId, session);
+    persistSessions();
   }
 
   return session;
@@ -800,7 +811,12 @@ const server = http.createServer(async (req, res) => {
 
   // 1. DISCORD OAUTH2 REDIRECT
   if (pathname === '/auth/discord') {
-    const discordAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${DISCORD_CLIENT_ID}&redirect_uri=${encodeURIComponent(getRedirectUri(req))}&response_type=code&scope=identify`;
+    // Carried through Discord's own state param so the callback knows which
+    // page to send the browser back to - contact.html and employee.html both
+    // link here, and a citizen signing in from Contact shouldn't get bounced
+    // to the employee login page just because they don't hold a staff role.
+    const next = ['employee', 'contact'].includes(parsedUrl.query.next) ? parsedUrl.query.next : 'contact';
+    const discordAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${DISCORD_CLIENT_ID}&redirect_uri=${encodeURIComponent(getRedirectUri(req))}&response_type=code&scope=identify&state=${encodeURIComponent(next)}`;
     res.writeHead(302, { 'Location': discordAuthUrl });
     return res.end();
   }
@@ -808,6 +824,7 @@ const server = http.createServer(async (req, res) => {
   // 2. DISCORD OAUTH2 CALLBACK
   if (pathname === '/auth/discord/callback') {
     const code = parsedUrl.query.code;
+    const next = ['employee', 'contact'].includes(parsedUrl.query.state) ? parsedUrl.query.state : 'contact';
     if (!code) {
       res.writeHead(302, { 'Location': '/employee?error=no_code' });
       return res.end();
@@ -877,9 +894,20 @@ const server = http.createServer(async (req, res) => {
                   persistSessions();
 
                   const isHttps = (req.headers['x-forwarded-proto'] === 'https') || req.connection.encrypted;
+                  // Only someone who came from the Employee Access page sees
+                  // the "you don't have the required role" message - a
+                  // citizen signing in from the Contact page just lands back
+                  // there, signed in, regardless of whether they hold staff
+                  // roles (their session works for the citizen forms either way).
+                  let redirectTo;
+                  if (next === 'employee') {
+                    redirectTo = perms.isOfficer ? '/employee/dashboard' : '/employee?error=unauthorized_role';
+                  } else {
+                    redirectTo = '/contact';
+                  }
                   res.writeHead(302, {
                     'Set-Cookie': `wp_session=${newSessionId}; Path=/; Max-Age=86400; SameSite=Lax; HttpOnly${isHttps ? '; Secure' : ''}`,
-                    'Location': perms.isOfficer ? '/employee/dashboard' : '/contact',
+                    'Location': redirectTo,
                     ...SECURITY_HEADERS
                   });
                   return res.end();
@@ -1355,6 +1383,7 @@ const server = http.createServer(async (req, res) => {
     });
     writeJSONFile('role-permissions.json', config);
     roleConfigCache = config;
+    roleConfigUpdatedAt = Date.now();
     return sendJSON(res, 200, { success: true, roleCount: Object.keys(config).length });
   }
 
@@ -1811,7 +1840,12 @@ const server = http.createServer(async (req, res) => {
   // 16. Protected Employee Dashboard Route
   if (pathname === '/employee/dashboard') {
     if (!currentSession || !currentSession.permissions.isOfficer) {
-      res.writeHead(302, { 'Location': '/employee', ...SECURITY_HEADERS });
+      // No session at all -> plain login prompt. Has a session but lost (or
+      // never had) staff access -> the same "required role" message as a
+      // failed employee sign-in, since from their side it's the same thing:
+      // they tried to reach the dashboard and can't.
+      const dest = currentSession ? '/employee?error=unauthorized_role' : '/employee';
+      res.writeHead(302, { 'Location': dest, ...SECURITY_HEADERS });
       return res.end();
     }
     const filePath = path.join(VIEWS_DIR, 'employee-dashboard.html');
