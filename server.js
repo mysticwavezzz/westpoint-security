@@ -183,6 +183,8 @@ const ROUTE_VIEWS = {
   '/newsroom': 'newsroom.html',
   '/report-misconduct': 'report-misconduct.html',
   '/contact': 'contact.html',
+  '/terms': 'terms.html',
+  '/privacy': 'privacy.html',
   '/employee': 'employee.html',
   '/employee/dashboard': 'employee-dashboard.html',
   '/site-map': 'site-map.html'
