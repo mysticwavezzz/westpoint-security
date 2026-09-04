@@ -47,14 +47,96 @@
     <main class="main-layout" id="main-content" tabindex="-1">
       <article class="main-content">
         <h1>Contact Us</h1>
+        
         <section class="content-box">
-          <h2>Westpoint Security</h2>
+          <h2>Westpoint Security Headquarters</h2>
           <div class="content-box-body">
-            <p><strong>Region:</strong> Harrison County</p>
-            <p><strong>Misconduct & Commendations:</strong> <a href="./report-misconduct.html">[ Submit Online Report ]</a></p>
+            <p><strong>Regional Jurisdiction:</strong> Harrison County</p>
+            <p><strong>Department Inquiries:</strong> General inquiries, private contracting, event coverage, and administrative contacts.</p>
+            <p><strong>Misconduct & Commendations:</strong> <a href="./report-misconduct.html">[ Official IA Docket / Filing Desk ]</a></p>
+          </div>
+        </section>
+
+        <section class="content-box content-box-notice" style="margin-top: 18px;">
+          <h2>Reach Out to Staff</h2>
+          <div class="content-box-body">
+            <p style="margin: 0 0 14px; font-size: 11.5px; color: #4A5B69;">
+              Use this official communication form to direct questions, service contract inquiries, or general notices to Westpoint Security leadership and staff.
+            </p>
+
+            <form class="period-form" id="staffContactForm" onsubmit="handleStaffContact(event)">
+              <fieldset>
+                <legend>Inquiry Details</legend>
+                <label>Your Name / Organization:
+                  <input type="text" name="senderName" required placeholder="e.g. John Doe, Harrison County Business Association" />
+                </label>
+                <label>Discord Username or Contact Handle:
+                  <input type="text" name="contactHandle" required placeholder="e.g. j_doe or email / Roblox username" />
+                </label>
+                <label>Subject / Topic:
+                  <select name="inquiryCategory" required>
+                    <option value="General Inquiry">General Staff Inquiry</option>
+                    <option value="Event Security Contract">Event Security Coverage Request</option>
+                    <option value="Private Property Contract">Private / Commercial Property Security</option>
+                    <option value="Administrative Question">Administrative / Command Question</option>
+                    <option value="Other">Other Notice</option>
+                  </select>
+                </label>
+                <label>Message / Details:
+                  <textarea name="messageContent" required placeholder="Provide full details regarding your inquiry or request..."></textarea>
+                </label>
+              </fieldset>
+              <div style="margin-top: 10px;">
+                <button type="submit" class="period-button" id="btnSubmitContact">[ TRANSMIT TO STAFF ]</button>
+              </div>
+              <div id="contactStatusMsg" style="margin-top: 10px; font-weight: bold; font-size: 11px;"></div>
+            </form>
           </div>
         </section>
       </article>
+
+      <script>
+        async function handleStaffContact(e) {
+          e.preventDefault();
+          const form = document.getElementById('staffContactForm');
+          const btn = document.getElementById('btnSubmitContact');
+          const statusDiv = document.getElementById('contactStatusMsg');
+
+          statusDiv.style.color = '#546675';
+          statusDiv.innerText = 'Transmitting message to Westpoint Security Staff...';
+          btn.disabled = true;
+
+          const payload = {
+            senderName: form.senderName.value.trim(),
+            contactHandle: form.contactHandle.value.trim(),
+            category: form.inquiryCategory.value,
+            message: form.messageContent.value.trim()
+          };
+
+          try {
+            const res = await fetch('/api/contact/staff', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            btn.disabled = false;
+
+            if (res.ok && data.success) {
+              statusDiv.style.color = 'green';
+              statusDiv.innerText = 'Message transmitted to staff successfully! Reference ID: ' + (data.id || 'MSG-SENT');
+              form.reset();
+            } else {
+              statusDiv.style.color = '#9E2A2B';
+              statusDiv.innerText = 'Error: ' + (data.error || 'Failed to transmit message.');
+            }
+          } catch(err) {
+            btn.disabled = false;
+            statusDiv.style.color = '#9E2A2B';
+            statusDiv.innerText = 'Transmission error: Unable to contact server.';
+          }
+        }
+      </script>
     </main>
     <footer class="site-footer">
       <nav aria-label="Footer navigation">
