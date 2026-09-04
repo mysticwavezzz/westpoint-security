@@ -746,7 +746,7 @@ function nextShiftNumber(db, userId, weekKey) {
 // messageIds }; leaves mergedPath itself alone but cleans up the mp4
 // conversion and any split parts.
 async function postShiftVideoToDiscord(db, bcSession, mergedPath, durationSeconds, shiftNumber) {
-  const mp4Path = await video.convertToMp4(mergedPath, durationSeconds);
+  const mp4Path = await video.convertToMp4(mergedPath, durationSeconds, Math.floor(bcSession.started_at / 1000));
   const partPaths = await video.splitBySize(mp4Path, videoLog.DISCORD_FILE_LIMIT_BYTES, durationSeconds);
   const staffRow = db.prepare('SELECT roblox_username FROM staff_members WHERE user_id = ?').get(bcSession.user_id);
   const displayName = staffRow?.roblox_username || bcSession.user_id;
