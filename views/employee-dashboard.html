@@ -524,18 +524,8 @@
           <div id="shiftHistoryList"></div>
 
           <div id="shiftPlaybackPanel" style="display: none; margin-top: 16px; padding-top: 14px; border-top: 1px dashed #CFD8DC;">
-            <video id="shiftPlaybackVideo" style="width: 100%; background: #000; max-height: 46vh;" controls></video>
-            <div style="display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-top: 10px;">
-              <label style="font-size: 10.5px;">Trim Start (sec)
-                <input type="number" id="trimStartInput" min="0" value="0" style="width: 90px; display: block;" />
-              </label>
-              <label style="font-size: 10.5px;">Trim End (sec)
-                <input type="number" id="trimEndInput" min="0" value="0" style="width: 90px; display: block;" />
-              </label>
-              <button type="button" class="period-button period-button-secondary" style="font-size: 9.5px; padding: 6px 10px;" onclick="exportTrimmedClip()">[ EXPORT TRIMMED CLIP ]</button>
-              <a id="shiftDownloadFullLink" href="#" download class="period-button" style="font-size: 9.5px; padding: 6px 10px;">[ DOWNLOAD FULL RECORDING ]</a>
-            </div>
-            <div id="trimStatus" style="margin-top: 8px; font-size: 10.5px; color: #546675;"></div>
+            <p style="font-size: 10px; color: #546675; margin: 0 0 10px;">Recordings are stored as Discord video-log posts - each part below plays and trims independently.</p>
+            <div id="shiftPlaybackParts"></div>
           </div>
         </div>
       </div>
@@ -1334,44 +1324,61 @@
 
     function closeShiftHistory() {
       document.getElementById('shiftHistoryModal').style.display = 'none';
-      const playbackVideo = document.getElementById('shiftPlaybackVideo');
-      playbackVideo.pause();
-      playbackVideo.src = '';
+      document.getElementById('shiftPlaybackParts').querySelectorAll('video').forEach(v => { v.pause(); v.src = ''; });
       shiftHistoryActiveBodycamId = null;
     }
 
+    // Recordings now live on Discord (see videoLog.js) and can arrive split
+    // into several parts if a shift's video was too big for one upload -
+    // each part gets its own player, download link, and trim form since
+    // trimming operates on that part's own timeline, not the whole shift.
     async function watchShiftRecording(bcId) {
       const panel = document.getElementById('shiftPlaybackPanel');
-      const playbackVideo = document.getElementById('shiftPlaybackVideo');
-      const trimStatus = document.getElementById('trimStatus');
-      trimStatus.innerText = '';
+      const partsEl = document.getElementById('shiftPlaybackParts');
+      partsEl.innerHTML = '<p style="font-size: 11px; color: #546675;">Loading recording from Discord…</p>';
       panel.style.display = 'block';
       panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
       try {
         const res = await fetch(`/api/bodycam/${encodeURIComponent(bcId)}/playback`);
         const data = await res.json();
-        if (!res.ok) {
-          trimStatus.style.color = '#9E2A2B';
-          trimStatus.innerText = data.error || 'Could not load recording.';
+        if (!res.ok || !data.parts || data.parts.length === 0) {
+          partsEl.innerHTML = '<p style="font-size: 11px; color: #9E2A2B;">' + escapeHtml(data.error || 'Could not load recording.') + '</p>';
           return;
         }
         shiftHistoryActiveBodycamId = bcId;
-        playbackVideo.src = data.url;
-        document.getElementById('shiftDownloadFullLink').href = data.downloadUrl || data.url;
-        document.getElementById('trimStartInput').value = 0;
-        document.getElementById('trimEndInput').value = data.durationSeconds || 0;
+        const approxPartSeconds = Math.round((data.durationSeconds || 0) / data.parts.length);
+
+        partsEl.innerHTML = data.parts.map(p => {
+          const label = p.total > 1 ? `Part ${p.part} of ${p.total}` : 'Recording';
+          return `
+            <div style="margin-top: ${p.part > 1 ? '18px' : '0'}; padding-top: ${p.part > 1 ? '14px' : '0'}; ${p.part > 1 ? 'border-top: 1px dashed #ECEFF1;' : ''}">
+              <div style="font-size: 10.5px; font-weight: bold; color: #2D3942; margin-bottom: 6px;">${escapeHtml(label)}</div>
+              <video style="width: 100%; background: #000; max-height: 46vh;" controls src="${p.url}"></video>
+              <div style="display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-top: 10px;">
+                <label style="font-size: 10.5px;">Trim Start (sec)
+                  <input type="number" class="trimStartInput" data-part="${p.part}" min="0" value="0" style="width: 90px; display: block;" />
+                </label>
+                <label style="font-size: 10.5px;">Trim End (sec)
+                  <input type="number" class="trimEndInput" data-part="${p.part}" min="0" value="${approxPartSeconds}" style="width: 90px; display: block;" />
+                </label>
+                <button type="button" class="period-button period-button-secondary" style="font-size: 9.5px; padding: 6px 10px;" onclick="exportTrimmedClip(${p.part})">[ EXPORT TRIMMED CLIP ]</button>
+                <a href="${p.url}" download="${escapeHtml(p.filename || 'bodycam.webm')}" class="period-button" style="font-size: 9.5px; padding: 6px 10px;">[ DOWNLOAD FULL RECORDING ]</a>
+              </div>
+              <div class="trimStatus" data-part="${p.part}" style="margin-top: 8px; font-size: 10.5px; color: #546675;"></div>
+            </div>
+          `;
+        }).join('');
       } catch (e) {
-        trimStatus.style.color = '#9E2A2B';
-        trimStatus.innerText = 'Network error loading recording.';
+        partsEl.innerHTML = '<p style="font-size: 11px; color: #9E2A2B;">Network error loading recording.</p>';
       }
     }
 
-    async function exportTrimmedClip() {
+    async function exportTrimmedClip(part) {
       if (!shiftHistoryActiveBodycamId) return;
-      const trimStatus = document.getElementById('trimStatus');
-      const startSeconds = Number(document.getElementById('trimStartInput').value) || 0;
-      const endSeconds = Number(document.getElementById('trimEndInput').value) || 0;
+      const trimStatus = document.querySelector(`.trimStatus[data-part="${part}"]`);
+      const startSeconds = Number(document.querySelector(`.trimStartInput[data-part="${part}"]`).value) || 0;
+      const endSeconds = Number(document.querySelector(`.trimEndInput[data-part="${part}"]`).value) || 0;
       if (endSeconds <= startSeconds) {
         trimStatus.style.color = '#9E2A2B';
         trimStatus.innerText = 'End time must be after start time.';
@@ -1384,16 +1391,27 @@
         const res = await fetch(`/api/bodycam/${encodeURIComponent(shiftHistoryActiveBodycamId)}/trim`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ startSeconds, endSeconds })
+          body: JSON.stringify({ startSeconds, endSeconds, part })
         });
-        const data = await res.json();
         if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
           trimStatus.style.color = '#9E2A2B';
           trimStatus.innerText = data.error || 'Trim failed.';
           return;
         }
+        // Streamed straight back as a file, not a JSON URL - it's a one-off
+        // export for whoever asked, not something re-hosted anywhere.
+        const blob = await res.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = `bodycam-${shiftHistoryActiveBodycamId}-part${part}-clip.mp4`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
         trimStatus.style.color = '#1B5E20';
-        trimStatus.innerHTML = 'Clip ready: <a href="' + data.url + '" target="_blank" rel="noopener">[ DOWNLOAD TRIMMED CLIP ]</a>';
+        trimStatus.innerText = 'Clip trimmed and downloaded.';
       } catch (e) {
         trimStatus.style.color = '#9E2A2B';
         trimStatus.innerText = 'Network error trimming clip.';

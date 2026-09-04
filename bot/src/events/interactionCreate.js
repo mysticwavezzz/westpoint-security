@@ -1,5 +1,6 @@
 const { MessageFlags } = require('discord.js');
 const actionCommand = require('../commands/action');
+const bodycamTrim = require('../commands/bodycamTrim');
 const logger = require('../services/logger');
 
 module.exports = {
@@ -34,6 +35,8 @@ module.exports = {
       if (interaction.isButton()) {
         if (interaction.customId.startsWith('action_open_modal:')) {
           await actionCommand.handleOpenModal(interaction);
+        } else if (interaction.customId.startsWith('bodycam_trim_open:')) {
+          await bodycamTrim.handleOpenModal(interaction);
         }
         return;
       }
@@ -41,6 +44,8 @@ module.exports = {
       if (interaction.isModalSubmit()) {
         if (interaction.customId.startsWith('action_modal_submit:')) {
           await actionCommand.handleModalSubmit(interaction);
+        } else if (interaction.customId.startsWith('bodycam_trim_submit:')) {
+          await bodycamTrim.handleModalSubmit(interaction);
         }
         return;
       }

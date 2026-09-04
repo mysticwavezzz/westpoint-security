@@ -19,6 +19,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(BASE_DIR, 'data');
 const robloxService = require('./lib/robloxService.js');
 const r2 = require('./lib/r2.js');
 const video = require('./lib/video.js');
+const videoLog = require('./lib/videoLog.js');
 // Shared with the Discord bot (resilient-meitner). That bot currently only
 // runs on this machine, so this only resolves where the bot's SQLite file is
 // actually reachable on disk — override with BOT_DB_PATH in .env for any
@@ -50,6 +51,11 @@ const DISCORD_CLIENT_SECRET = process.env.CLIENT_SECRET;
 const GUILD_ID = process.env.GUILD_ID || '1522793078199419022';
 const DEPT_LOGS_CHANNEL_ID = process.env.DEPARTMENT_LOGS_CHANNEL_ID || '1542980017472929944';
 const AUDIT_LOGS_CHANNEL_ID = process.env.AUDIT_LOGS_CHANNEL_ID || '1540024507761164348';
+// Bodycam video logs post to a *different* server than the main guild (per-
+// officer channels get created under this one, next to the "video logs"
+// channel/category originally given).
+const VIDEO_LOG_GUILD_ID = process.env.VIDEO_LOG_GUILD_ID || '1540023207082463272';
+const VIDEO_LOG_PARENT_ID = process.env.VIDEO_LOG_PARENT_ID || '1545537864677331105';
 
 // Discord validates redirect_uri against exactly what's registered in the app's
 // developer portal, so it must match the domain the request actually arrived
@@ -340,11 +346,29 @@ function getBotDb() {
         duration_seconds INTEGER,
         error TEXT
       );
+      CREATE TABLE IF NOT EXISTS officer_video_channels (
+        user_id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS video_channel_clears (
+        week_key TEXT PRIMARY KEY,
+        cleared_at INTEGER NOT NULL
+      );
     `);
-    // Older bot.db files predate the bodycam_id column on active_sessions.
+    // Older bot.db files predate these columns/tables.
     try {
       botDbInstance.exec('ALTER TABLE active_sessions ADD COLUMN bodycam_id TEXT');
     } catch (e) {} // already exists
+    try {
+      botDbInstance.exec('ALTER TABLE bodycam_sessions ADD COLUMN discord_channel_id TEXT');
+    } catch (e) {}
+    try {
+      botDbInstance.exec('ALTER TABLE bodycam_sessions ADD COLUMN discord_message_ids TEXT');
+    } catch (e) {}
+    try {
+      botDbInstance.exec('ALTER TABLE shift_history ADD COLUMN shift_number INTEGER');
+    } catch (e) {}
     return botDbInstance;
   } catch (e) {
     console.error('[DATABASE CONNECT ERROR]', e.message);
@@ -648,16 +672,20 @@ async function revalidateSession(sessionId, session) {
 }
 
 // -------------------------------------------------------------
-// BODYCAM STORAGE CAP: R2's free tier is 10GB-month. Kept as a cheap
-// in-memory running total (incremented/decremented as chunks and merged
-// files are written/deleted) rather than a live bucket listing on every
-// request - a full ListObjectsV2 walk is itself a billed Class A operation,
-// so doing that per-chunk-upload would work against the exact goal here.
-// Corrected periodically against the real bucket total in case anything
-// drifts (a crashed finalize job, manual bucket edits, etc.).
+// BODYCAM STORAGE CAP: R2 now only holds chunks for a shift that's still
+// recording (used for the near-live viewer) - the finished recording lives
+// on Discord instead (see videoLog.js), so R2 is bounded by how much
+// footage is being actively recorded right now, not by total archive size.
+// The 10GB-month free tier cap is kept as a cheap in-memory running total
+// (incremented/decremented as chunks are written/deleted) rather than a
+// live bucket listing on every request - a full ListObjectsV2 walk is
+// itself a billed Class A operation, so doing that per-chunk-upload would
+// work against the exact goal here. Corrected periodically against the
+// real bucket total in case anything drifts (a crashed finalize job,
+// manual bucket edits, etc.).
 // -------------------------------------------------------------
 const BODYCAM_STORAGE_LIMIT_BYTES = 9.9 * 1024 * 1024 * 1024; // 9.9 GiB, just under the 10GB-month free tier
-const BODYCAM_SEGMENT_MS = 15000; // must match BODYCAM_RECORD_MS in employee-dashboard.html
+const BODYCAM_SEGMENT_MS = 20000; // must match BODYCAM_SEGMENT_MS in employee-dashboard.html
 let bodycamStorageBytes = 0;
 let bodycamStorageReady = false;
 
@@ -677,14 +705,48 @@ function isBodycamStorageFull() {
   return bodycamStorageReady && bodycamStorageBytes >= BODYCAM_STORAGE_LIMIT_BYTES;
 }
 
+// Given an officer's user id, returns (creating if needed) the Discord
+// channel id for their video-log channel. Reuses a previously-created
+// channel from officer_video_channels; if that channel was since deleted
+// out from under us, createOfficerChannel makes a fresh one and this
+// overwrites the stale row.
+async function getOrCreateOfficerChannel(db, userId, displayName) {
+  const existing = db.prepare('SELECT channel_id FROM officer_video_channels WHERE user_id = ?').get(userId);
+  if (existing) {
+    try {
+      await videoLog.fetchChannel(DISCORD_BOT_TOKEN, existing.channel_id);
+      return existing.channel_id;
+    } catch (e) {
+      // channel is gone or inaccessible - fall through and recreate it
+    }
+  }
+  const channel = await videoLog.createOfficerChannel(DISCORD_BOT_TOKEN, VIDEO_LOG_GUILD_ID, VIDEO_LOG_PARENT_ID, displayName);
+  db.prepare(`
+    INSERT INTO officer_video_channels (user_id, channel_id, created_at) VALUES (?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET channel_id = excluded.channel_id, created_at = excluded.created_at
+  `).run(userId, channel.id, Date.now());
+  return channel.id;
+}
+
+// Sequential per-officer, per-week number shown in the log embeds/splitters
+// ("SHIFT LOG #N") - counts this officer's already-finalized sessions this
+// week and adds one.
+function nextShiftNumber(db, userId, weekKey) {
+  const row = db.prepare("SELECT COUNT(*) AS c FROM bodycam_sessions WHERE user_id = ? AND week_key = ? AND status = 'ready'").get(userId, weekKey);
+  return (row?.c || 0) + 1;
+}
+
 // Downloads every uploaded chunk for a finished bodycam session, stream-copy
 // concatenates them into one webm (no re-encoding - see lib/video.js for why
-// that matters), uploads the result, and drops the now-redundant chunk
-// objects. Runs after the response to /api/bodycam/stop has already gone
-// out, though the whole point of the stream-copy approach is that this no
-// longer takes long enough for that to matter much.
+// that matters), then posts it to the officer's Discord video-log channel
+// (splitting into multiple parts first if it's too big for one upload) and
+// drops the now-redundant R2 chunk objects. Runs after the response to
+// /api/bodycam/stop has already gone out, though the whole point of the
+// stream-copy approach is that this no longer takes long enough for that to
+// matter much.
 async function finalizeBodycamSession(bodycamId) {
   const db = getBotDb();
+  const bcSession = db.prepare('SELECT * FROM bodycam_sessions WHERE id = ?').get(bodycamId);
   const chunks = await r2.listObjectsWithSize(`bodycam/${bodycamId}/chunk-`);
   if (chunks.length === 0) {
     db.prepare("UPDATE bodycam_sessions SET status = 'ready', duration_seconds = 0 WHERE id = ?").run(bodycamId);
@@ -692,6 +754,8 @@ async function finalizeBodycamSession(bodycamId) {
   }
 
   let localChunkPaths = [];
+  let mergedPath = null;
+  let partPaths = [];
   try {
     // Downloaded in parallel - chunks.map preserves order in the results
     // regardless of which finishes first, which concatenation depends on.
@@ -708,49 +772,106 @@ async function finalizeBodycamSession(bodycamId) {
       return localPath;
     }));
 
-    const { path: mergedPath } = await video.mergeChunksToWebm(localChunkPaths);
+    const merged = await video.mergeChunksToWebm(localChunkPaths);
+    mergedPath = merged.path;
     // Estimated from segment count, not probed from the file - see
     // lib/video.js for why (no bundled ffprobe binary). The last segment of
-    // a shift is sometimes shorter than a full 15s (duty ended mid-clip),
+    // a shift is sometimes shorter than a full 20s (duty ended mid-clip),
     // so this can run slightly long, which is fine for display/trim-range
     // purposes.
     const durationSeconds = chunks.length * (BODYCAM_SEGMENT_MS / 1000);
-    let mergedSize = 0;
-    try {
-      mergedSize = fs.statSync(mergedPath).size;
-      await r2.putObject(`bodycam/${bodycamId}/final.webm`, fs.readFileSync(mergedPath), 'video/webm');
-    } finally {
-      try { fs.unlinkSync(mergedPath); } catch (e) {}
+
+    partPaths = await video.splitBySize(mergedPath, videoLog.DISCORD_FILE_LIMIT_BYTES, durationSeconds);
+
+    const staffRow = db.prepare('SELECT roblox_username FROM staff_members WHERE user_id = ?').get(bcSession.user_id);
+    const displayName = staffRow?.roblox_username || bcSession.user_id;
+    const weekKey = bcSession.week_key;
+    const shiftNumber = nextShiftNumber(db, bcSession.user_id, weekKey);
+    const channelId = await getOrCreateOfficerChannel(db, bcSession.user_id, displayName);
+    const messageIds = [];
+
+    const opener = await videoLog.postMessage(DISCORD_BOT_TOKEN, channelId, {
+      content: `**═══════ SHIFT LOG #${shiftNumber} ═══════**\n<@${bcSession.user_id}> (${displayName}) • Duration: ${formatDuration(durationSeconds)} • ${new Date(bcSession.started_at).toLocaleString()}`
+    });
+    messageIds.push({ id: opener.id, type: 'splitter' });
+
+    for (let i = 0; i < partPaths.length; i++) {
+      const partLabel = partPaths.length > 1 ? ` (Part ${i + 1}/${partPaths.length})` : '';
+      const embed = {
+        title: `Shift Log #${shiftNumber}${partLabel}`,
+        color: 0x9E2A2B,
+        fields: [
+          { name: 'Officer', value: `<@${bcSession.user_id}> (${displayName})`, inline: true },
+          { name: 'Duration', value: formatDuration(durationSeconds), inline: true },
+          { name: 'Recorded', value: new Date(bcSession.started_at).toLocaleString(), inline: false }
+        ]
+      };
+      const button = {
+        type: 1,
+        components: [{ type: 2, style: 2, label: 'Trim Clip', custom_id: `bodycam_trim_open:${bodycamId}:${i}` }]
+      };
+      const msg = await videoLog.postMessage(
+        DISCORD_BOT_TOKEN,
+        channelId,
+        { embeds: [embed], components: [button] },
+        [{ path: partPaths[i], name: `shift-${shiftNumber}${partPaths.length > 1 ? `-part${i + 1}` : ''}.webm` }]
+      );
+      messageIds.push({ id: msg.id, type: 'video', part: i + 1, total: partPaths.length });
     }
+
+    const closer = await videoLog.postMessage(DISCORD_BOT_TOKEN, channelId, {
+      content: `**═══════ END SHIFT LOG #${shiftNumber} ═══════**`
+    });
+    messageIds.push({ id: closer.id, type: 'splitter' });
 
     await r2.deleteObjects(chunks.map(c => c.key));
     const chunkBytesFreed = chunks.reduce((sum, c) => sum + c.size, 0);
-    bodycamStorageBytes += mergedSize - chunkBytesFreed; // stream copy means this is just container overhead, not a real re-encode saving
-    db.prepare("UPDATE bodycam_sessions SET status = 'ready', duration_seconds = ? WHERE id = ?").run(durationSeconds || 0, bodycamId);
+    bodycamStorageBytes -= chunkBytesFreed;
+
+    db.prepare(`
+      UPDATE bodycam_sessions
+      SET status = 'ready', duration_seconds = ?, discord_channel_id = ?, discord_message_ids = ?
+      WHERE id = ?
+    `).run(durationSeconds || 0, channelId, JSON.stringify(messageIds), bodycamId);
   } finally {
     localChunkPaths.forEach(p => { try { fs.unlinkSync(p); } catch (e) {} });
+    if (mergedPath) { try { fs.unlinkSync(mergedPath); } catch (e) {} }
+    partPaths.forEach(p => { if (p !== mergedPath) { try { fs.unlinkSync(p); } catch (e) {} } });
   }
 }
 
-// Bodycam recordings expire when the weekly quota resets (Monday), same as
-// the user asked for - keeps R2 storage bounded without indefinite retention.
+// Bodycam recordings expire when the weekly quota resets, same as the user
+// asked for. The video itself now lives on Discord (not R2), so "expiry"
+// here just flips old sessions' status for shift-history labeling on the
+// website; the actual cleanup is clearing every officer's video-log channel,
+// once, the first tick after the week actually rolls over - guarded by
+// video_channel_clears so this doesn't wipe channels again on every hourly
+// tick within the same week.
 setInterval(async () => {
   try {
     const db = getBotDb();
-    if (!db || !r2.isConfigured()) return;
+    if (!db) return;
     const currentWeek = getWeekKey();
-    const stale = db.prepare("SELECT id FROM bodycam_sessions WHERE status = 'ready' AND week_key != ?").all(currentWeek);
-    for (const row of stale) {
-      try {
-        const objs = await r2.listObjectsWithSize(`bodycam/${row.id}/`);
-        if (objs.length) {
-          await r2.deleteObjects(objs.map(o => o.key));
-          bodycamStorageBytes -= objs.reduce((sum, o) => sum + o.size, 0);
+
+    db.prepare("UPDATE bodycam_sessions SET status = 'expired' WHERE status = 'ready' AND week_key != ?").run(currentWeek);
+
+    const alreadyCleared = db.prepare('SELECT 1 FROM video_channel_clears WHERE week_key = ?').get(currentWeek);
+    if (!alreadyCleared && DISCORD_BOT_TOKEN) {
+      // Only clear if we've actually seen a prior week's data - otherwise a
+      // fresh deploy mid-week would wipe channels that were never meant to
+      // be cleared yet.
+      const rolledOver = db.prepare("SELECT 1 FROM bodycam_sessions WHERE week_key != ? LIMIT 1").get(currentWeek);
+      if (rolledOver) {
+        const channels = db.prepare('SELECT channel_id FROM officer_video_channels').all();
+        for (const { channel_id } of channels) {
+          try {
+            await videoLog.clearChannel(DISCORD_BOT_TOKEN, channel_id);
+          } catch (e) {
+            console.error('[VIDEO CHANNEL CLEAR ERROR]', channel_id, e.message);
+          }
         }
-        db.prepare("UPDATE bodycam_sessions SET status = 'expired' WHERE id = ?").run(row.id);
-      } catch (e) {
-        console.error('[BODYCAM EXPIRY ERROR]', row.id, e.message);
       }
+      db.prepare('INSERT OR REPLACE INTO video_channel_clears (week_key, cleared_at) VALUES (?, ?)').run(currentWeek, Date.now());
     }
   } catch (e) {}
 }, 60 * 60 * 1000);
@@ -1748,21 +1869,36 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 403, { error: 'Access denied' });
     }
     if (bcSession.status !== 'ready') return sendJSON(res, 409, { error: `Recording is ${bcSession.status}, not ready yet.` });
+    if (!bcSession.discord_channel_id || !bcSession.discord_message_ids) {
+      return sendJSON(res, 404, { error: 'This recording has no video log on file.' });
+    }
     try {
-      // .webm, not .mp4 - see lib/video.js for why: stream-copy concat can't
-      // losslessly produce an MP4 from VP8 input, and re-encoding to H.264
-      // for every single shift was the actual cause of slow "processing".
-      // Every modern browser plays webm natively, same as mp4.
-      const key = `bodycam/${bodycamId}/final.webm`;
-      const playbackUrl = await r2.presignedGetUrl(key, 3600);
-      const downloadUrl = await r2.presignedGetUrl(key, 3600, `bodycam-${bodycamId}.webm`);
-      return sendJSON(res, 200, { url: playbackUrl, downloadUrl, durationSeconds: bcSession.duration_seconds });
+      // Video lives on Discord now, not R2 - message attachment URLs carry a
+      // signature that expires, so re-fetch the message fresh on every
+      // playback request rather than caching the URL.
+      const videoMessages = JSON.parse(bcSession.discord_message_ids).filter(m => m.type === 'video');
+      const parts = await Promise.all(videoMessages.map(async (m) => {
+        try {
+          const msg = await videoLog.fetchMessage(DISCORD_BOT_TOKEN, bcSession.discord_channel_id, m.id);
+          const attachment = msg.attachments && msg.attachments[0];
+          return attachment ? { part: m.part, total: m.total, url: attachment.url, filename: attachment.filename } : null;
+        } catch (e) {
+          return null;
+        }
+      }));
+      const validParts = parts.filter(Boolean);
+      if (validParts.length === 0) return sendJSON(res, 404, { error: 'Video is no longer available on Discord.' });
+      return sendJSON(res, 200, { parts: validParts, durationSeconds: bcSession.duration_seconds });
     } catch (e) {
-      return sendJSON(res, 500, { error: 'Failed to generate playback link' });
+      console.error('[BODYCAM PLAYBACK ERROR]', e.message);
+      return sendJSON(res, 500, { error: 'Failed to fetch recording from Discord.' });
     }
   }
 
-  // API: POST /api/bodycam/:id/trim (Supervisor+ or self)
+  // API: POST /api/bodycam/:id/trim (Supervisor+ or self) - trims one part
+  // (trimBody.part, 1-based) of a shift's video and streams the result back
+  // directly as an MP4 download. Not re-uploaded anywhere - it's a one-off
+  // export for whoever requested it, not a persistent artifact.
   if (pathname.startsWith('/api/bodycam/') && pathname.endsWith('/trim') && req.method === 'POST') {
     if (!currentSession) return sendJSON(res, 401, { error: 'Unauthorized' });
     const bodycamId = pathname.split('/')[3];
@@ -1773,38 +1909,52 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 403, { error: 'Access denied' });
     }
     if (bcSession.status !== 'ready') return sendJSON(res, 409, { error: `Recording is ${bcSession.status}, not ready yet.` });
+    if (!bcSession.discord_channel_id || !bcSession.discord_message_ids) {
+      return sendJSON(res, 404, { error: 'This recording has no video log on file.' });
+    }
 
     const trimBody = await parseBody(req);
     const startSeconds = Math.max(0, Number(trimBody.startSeconds) || 0);
     const endSeconds = Math.max(startSeconds + 1, Number(trimBody.endSeconds) || startSeconds + 1);
+    const partNumber = Math.max(1, parseInt(trimBody.part, 10) || 1);
 
-    let localFinal, localTrim;
+    let localSource, localTrim;
     try {
-      const { stream } = await r2.getObjectStream(`bodycam/${bodycamId}/final.webm`);
-      localFinal = video.tempPath('webm');
-      await new Promise((resolve, reject) => {
-        const out = fs.createWriteStream(localFinal);
-        stream.pipe(out);
-        stream.on('error', reject);
-        out.on('finish', resolve);
-        out.on('error', reject);
-      });
+      const videoMessages = JSON.parse(bcSession.discord_message_ids).filter(m => m.type === 'video');
+      const target = videoMessages.find(m => m.part === partNumber) || videoMessages[0];
+      if (!target) return sendJSON(res, 404, { error: 'No video part found to trim.' });
+      const msg = await videoLog.fetchMessage(DISCORD_BOT_TOKEN, bcSession.discord_channel_id, target.id);
+      const attachment = msg.attachments && msg.attachments[0];
+      if (!attachment) return sendJSON(res, 404, { error: 'Video attachment is no longer available on Discord.' });
+
+      localSource = video.tempPath('webm');
+      await video.downloadToFile(attachment.url, localSource);
 
       // This is the one path that does still transcode (to H.264 mp4, for
       // broad download compatibility) - on demand, only when someone's
       // actively waiting on a specific clip, unlike the merge step above.
-      localTrim = await video.trimToMp4(localFinal, startSeconds, endSeconds);
-      const trimKey = `bodycam/${bodycamId}/trim-${Date.now()}.mp4`;
-      const trimBuffer = fs.readFileSync(localTrim);
-      await r2.putObject(trimKey, trimBuffer, 'video/mp4');
-      bodycamStorageBytes += trimBuffer.length;
-      const url = await r2.presignedGetUrl(trimKey, 3600, `bodycam-${bodycamId}-clip.mp4`);
-      return sendJSON(res, 200, { url });
+      localTrim = await video.trimToMp4(localSource, startSeconds, endSeconds);
+      const stat = fs.statSync(localTrim);
+      res.writeHead(200, {
+        'Content-Type': 'video/mp4',
+        'Content-Length': stat.size,
+        'Content-Disposition': `attachment; filename="bodycam-${bodycamId}-part${partNumber}-clip.mp4"`,
+        ...SECURITY_HEADERS
+      });
+      await new Promise((resolve, reject) => {
+        const readStream = fs.createReadStream(localTrim);
+        readStream.pipe(res);
+        readStream.on('end', resolve);
+        readStream.on('error', reject);
+        res.on('close', resolve);
+      });
+      return;
     } catch (e) {
       console.error('[BODYCAM TRIM ERROR]', e.message);
-      return sendJSON(res, 500, { error: 'Failed to trim recording' });
+      if (!res.headersSent) return sendJSON(res, 500, { error: 'Failed to trim recording' });
+      return;
     } finally {
-      [localFinal, localTrim].forEach(p => { if (p) { try { fs.unlinkSync(p); } catch (e) {} } });
+      [localSource, localTrim].forEach(p => { if (p) { try { fs.unlinkSync(p); } catch (e) {} } });
     }
   }
 
