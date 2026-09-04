@@ -112,8 +112,9 @@
                     <span id="bodycamStatusPill" class="status-pill status-pill-yellow" style="display: none;">OFF</span>
                   </div>
                   <p id="bodycamNotice" style="margin-top: 8px; font-size: 10.5px; color: #546675; display: none;"></p>
+                  <p id="bodycamStorageStatus" style="margin-top: 6px; font-size: 10px; color: #546675; font-family: monospace;"></p>
                   <p style="margin-top: 8px; font-size: 10.5px; color: #546675;">
-                    * When prompted, share the <strong>Roblox window</strong>, not your full screen - the browser's picker is the only thing that can restrict what's shared, so double-check before confirming. Recording saves to the department server, not your PC, and is visible live to Supervisors+ on the Duty Roster tab.
+                    * When prompted, share the <strong>Roblox window</strong>, not your full screen - the browser's picker is the only thing that can restrict what's shared, so double-check before confirming. Recording saves to the department server, not your PC, and is visible live to Supervisors+ on the Duty Roster tab. Records in short 15-second clips every 30 seconds to keep storage use low, not continuously.
                   </p>
                 </div>
               </div>
@@ -672,17 +673,46 @@
     }
 
     // ============== BODYCAM ==============
+    // Records in 15-second bursts every 30 seconds (not continuously) and at
+    // a capped bitrate, both purely to keep R2 storage/cost down - this is a
+    // periodic-sample bodycam, not a continuous one.
+    const BODYCAM_RECORD_MS = 15000;
+    const BODYCAM_CYCLE_MS = 30000;
+    const BODYCAM_BITRATE = 800000; // ~800kbps - plenty for reviewing a game window, a fraction of default screen-capture bitrate
+
     let bodycamStream = null;
+    let bodycamTrack = null;
     let bodycamRecorder = null;
+    let bodycamCycleTimer = null;
+    let bodycamSegmentTimer = null;
     let bodycamId = null;
     let bodycamChunkIndex = 0;
     let bodycamLastUploadPromise = Promise.resolve();
+    let bodycamStopping = false;
 
     function showBodycamNotice(msg, kind) {
       const el = document.getElementById('bodycamNotice');
       el.style.display = 'block';
       el.style.color = kind === 'error' ? '#9E2A2B' : (kind === 'success' ? '#1B5E20' : '#546675');
       el.innerText = msg;
+    }
+
+    async function refreshBodycamStorageStatus() {
+      const el = document.getElementById('bodycamStorageStatus');
+      const btnStart = document.getElementById('btnStartBodycam');
+      if (!el) return;
+      try {
+        const res = await fetch('/api/bodycam/storage-status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.configured) { el.innerText = ''; return; }
+        el.innerText = `Bodycam storage: ${data.usedGB}GB / ${data.limitGB}GB used`;
+        el.style.color = data.full ? '#9E2A2B' : '#546675';
+        if (btnStart && !bodycamId) {
+          btnStart.disabled = !!data.full;
+          btnStart.title = data.full ? 'Bodycam storage limit reached - recording disabled' : '';
+        }
+      } catch (e) {}
     }
 
     async function startBodycam() {
@@ -720,37 +750,29 @@
         if (settings.displaySurface && settings.displaySurface !== 'window') {
           showBodycamNotice('Warning: that shared your entire screen, not just the Roblox window. Click Stop Bodycam and restart if that was a mistake.', 'error');
         } else {
-          showBodycamNotice('Bodycam recording started.', 'success');
+          showBodycamNotice('Bodycam recording started (15s clips every 30s).', 'success');
         }
 
         bodycamStream = stream;
+        bodycamTrack = track;
         bodycamChunkIndex = 0;
-        bodycamRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8' });
-
-        bodycamRecorder.ondataavailable = (e) => {
-          if (!e.data || e.data.size === 0) return;
-          const idx = bodycamChunkIndex++;
-          const activeBodycamId = bodycamId;
-          bodycamLastUploadPromise = fetch(`/api/bodycam/chunk?bodycamId=${encodeURIComponent(activeBodycamId)}&index=${idx}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'video/webm' },
-            body: e.data
-          }).catch(err => console.error('Bodycam chunk upload failed', err));
-        };
+        bodycamStopping = false;
 
         // Covers the officer using the browser's own "Stop sharing" bar
         // instead of the dashboard's Stop Bodycam button.
         track.addEventListener('ended', () => {
-          if (bodycamRecorder && bodycamRecorder.state !== 'inactive') stopBodycam();
+          if (!bodycamStopping) stopBodycam();
         });
 
-        bodycamRecorder.start(5000); // flush a chunk roughly every 5s
+        recordBodycamSegment();
+        bodycamCycleTimer = setInterval(recordBodycamSegment, BODYCAM_CYCLE_MS);
 
         btnStart.style.display = 'none';
         btnStop.style.display = 'inline-block';
         pill.style.display = 'inline-block';
         pill.innerText = '● RECORDING';
         pill.className = 'status-pill status-pill-green';
+        refreshBodycamStorageStatus();
       } catch (err) {
         showBodycamNotice('Unexpected error starting bodycam.', 'error');
       } finally {
@@ -758,11 +780,70 @@
       }
     }
 
+    // Records one BODYCAM_RECORD_MS-long segment on the already-open stream,
+    // then uploads it as a single chunk once it finishes. Each call is a
+    // fresh MediaRecorder instance (not one continuous recorder with
+    // start/pause), since MediaRecorder has no pause-and-resume-later mode
+    // that leaves gaps - two short recordings capture the same idea cleanly.
+    function recordBodycamSegment() {
+      if (!bodycamStream || bodycamStopping) return;
+      const pill = document.getElementById('bodycamStatusPill');
+      const localChunks = [];
+      let recorder;
+      try {
+        recorder = new MediaRecorder(bodycamStream, { mimeType: 'video/webm;codecs=vp8', videoBitsPerSecond: BODYCAM_BITRATE });
+      } catch (e) {
+        console.error('Bodycam recorder error', e);
+        return;
+      }
+      bodycamRecorder = recorder;
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) localChunks.push(e.data);
+      };
+      recorder.onstop = () => {
+        if (localChunks.length === 0) return;
+        const blob = new Blob(localChunks, { type: 'video/webm' });
+        uploadBodycamSegment(blob);
+      };
+
+      recorder.start();
+      if (pill) { pill.innerText = '● RECORDING'; pill.className = 'status-pill status-pill-green'; }
+      bodycamSegmentTimer = setTimeout(() => {
+        if (recorder.state !== 'inactive') recorder.stop();
+        if (pill && !bodycamStopping) { pill.innerText = 'IDLE (next clip soon)'; pill.className = 'status-pill status-pill-yellow'; }
+      }, BODYCAM_RECORD_MS);
+    }
+
+    function uploadBodycamSegment(blob) {
+      if (!bodycamId) return;
+      const idx = bodycamChunkIndex++;
+      const activeBodycamId = bodycamId;
+      bodycamLastUploadPromise = fetch(`/api/bodycam/chunk?bodycamId=${encodeURIComponent(activeBodycamId)}&index=${idx}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'video/webm' },
+        body: blob
+      }).then(async res => {
+        if (res.status === 507) {
+          const data = await res.json().catch(() => ({}));
+          if (data.error === 'storage_limit_reached') {
+            showBodycamNotice('Bodycam storage limit reached - recording stopped automatically.', 'error');
+            stopBodycam();
+          }
+        }
+        refreshBodycamStorageStatus();
+      }).catch(err => console.error('Bodycam segment upload failed', err));
+    }
+
     async function stopBodycam() {
       const btnStart = document.getElementById('btnStartBodycam');
       const btnStop = document.getElementById('btnStopBodycam');
       const pill = document.getElementById('bodycamStatusPill');
       const idToStop = bodycamId;
+      bodycamStopping = true;
+
+      if (bodycamCycleTimer) { clearInterval(bodycamCycleTimer); bodycamCycleTimer = null; }
+      if (bodycamSegmentTimer) { clearTimeout(bodycamSegmentTimer); bodycamSegmentTimer = null; }
 
       pill.innerText = 'FINALIZING…';
       pill.className = 'status-pill status-pill-yellow';
@@ -776,6 +857,7 @@
 
       if (bodycamStream) bodycamStream.getTracks().forEach(t => t.stop());
       bodycamStream = null;
+      bodycamTrack = null;
       bodycamRecorder = null;
       bodycamId = null;
 
@@ -795,6 +877,7 @@
           showBodycamNotice('Bodycam stopped, but the server could not be notified - it should still finalize automatically at duty end.', 'error');
         }
       }
+      refreshBodycamStorageStatus();
     }
 
     // Toggle Shift with Backend Roblox Presence Check
@@ -1565,6 +1648,7 @@
     loadOfficerSession();
     checkDutyStatus();
     updateActionFields();
+    refreshBodycamStorageStatus();
   </script>
 </body>
 </html>

@@ -581,6 +581,35 @@ async function revalidateSession(sessionId, session) {
   return session;
 }
 
+// -------------------------------------------------------------
+// BODYCAM STORAGE CAP: R2's free tier is 10GB-month. Kept as a cheap
+// in-memory running total (incremented/decremented as chunks and merged
+// files are written/deleted) rather than a live bucket listing on every
+// request - a full ListObjectsV2 walk is itself a billed Class A operation,
+// so doing that per-chunk-upload would work against the exact goal here.
+// Corrected periodically against the real bucket total in case anything
+// drifts (a crashed finalize job, manual bucket edits, etc.).
+// -------------------------------------------------------------
+const BODYCAM_STORAGE_LIMIT_BYTES = 9.9 * 1024 * 1024 * 1024; // 9.9 GiB, just under the 10GB-month free tier
+let bodycamStorageBytes = 0;
+let bodycamStorageReady = false;
+
+async function refreshBodycamStorageTotal() {
+  if (!r2.isConfigured()) return;
+  try {
+    bodycamStorageBytes = await r2.getBucketTotalBytes();
+    bodycamStorageReady = true;
+  } catch (e) {
+    console.error('[BODYCAM STORAGE REFRESH ERROR]', e.message);
+  }
+}
+refreshBodycamStorageTotal();
+setInterval(refreshBodycamStorageTotal, 30 * 60 * 1000); // drift-correction safety net
+
+function isBodycamStorageFull() {
+  return bodycamStorageReady && bodycamStorageBytes >= BODYCAM_STORAGE_LIMIT_BYTES;
+}
+
 // Downloads every uploaded chunk for a finished bodycam session, merges them
 // into one mp4 with ffmpeg, uploads the result, and drops the now-redundant
 // chunk objects. Runs after the response to /api/bodycam/stop has already
@@ -588,16 +617,16 @@ async function revalidateSession(sessionId, session) {
 // transcode, and the officer shouldn't have to wait on that HTTP request.
 async function finalizeBodycamSession(bodycamId) {
   const db = getBotDb();
-  const chunkKeys = await r2.listObjects(`bodycam/${bodycamId}/chunk-`);
-  if (chunkKeys.length === 0) {
+  const chunks = await r2.listObjectsWithSize(`bodycam/${bodycamId}/chunk-`);
+  if (chunks.length === 0) {
     db.prepare("UPDATE bodycam_sessions SET status = 'ready', duration_seconds = 0 WHERE id = ?").run(bodycamId);
     return;
   }
 
   const localChunkPaths = [];
   try {
-    for (const key of chunkKeys) {
-      const { stream } = await r2.getObjectStream(key);
+    for (const chunk of chunks) {
+      const { stream } = await r2.getObjectStream(chunk.key);
       const localPath = video.tempPath('webm');
       await new Promise((resolve, reject) => {
         const out = fs.createWriteStream(localPath);
@@ -610,13 +639,17 @@ async function finalizeBodycamSession(bodycamId) {
     }
 
     const { path: mergedPath, durationSeconds } = await video.mergeChunksToMp4(localChunkPaths);
+    let mergedSize = 0;
     try {
+      mergedSize = fs.statSync(mergedPath).size;
       await r2.putObject(`bodycam/${bodycamId}/final.mp4`, fs.readFileSync(mergedPath), 'video/mp4');
     } finally {
       try { fs.unlinkSync(mergedPath); } catch (e) {}
     }
 
-    await r2.deleteObjects(chunkKeys);
+    await r2.deleteObjects(chunks.map(c => c.key));
+    const chunkBytesFreed = chunks.reduce((sum, c) => sum + c.size, 0);
+    bodycamStorageBytes += mergedSize - chunkBytesFreed; // usually net negative - the encoded mp4 is smaller than the raw chunks
     db.prepare("UPDATE bodycam_sessions SET status = 'ready', duration_seconds = ? WHERE id = ?").run(durationSeconds || 0, bodycamId);
   } finally {
     localChunkPaths.forEach(p => { try { fs.unlinkSync(p); } catch (e) {} });
@@ -633,8 +666,11 @@ setInterval(async () => {
     const stale = db.prepare("SELECT id FROM bodycam_sessions WHERE status = 'ready' AND week_key != ?").all(currentWeek);
     for (const row of stale) {
       try {
-        const keys = await r2.listObjects(`bodycam/${row.id}/`);
-        if (keys.length) await r2.deleteObjects(keys);
+        const objs = await r2.listObjectsWithSize(`bodycam/${row.id}/`);
+        if (objs.length) {
+          await r2.deleteObjects(objs.map(o => o.key));
+          bodycamStorageBytes -= objs.reduce((sum, o) => sum + o.size, 0);
+        }
         db.prepare("UPDATE bodycam_sessions SET status = 'expired' WHERE id = ?").run(row.id);
       } catch (e) {
         console.error('[BODYCAM EXPIRY ERROR]', row.id, e.message);
@@ -1399,10 +1435,28 @@ const server = http.createServer(async (req, res) => {
   // Supervisors+, end-of-shift merge, archive playback/trim/download.
   // ===============================================================
 
+  // API: GET /api/bodycam/storage-status (Officer - shown next to the bodycam controls)
+  if (pathname === '/api/bodycam/storage-status' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
+    return sendJSON(res, 200, {
+      configured: r2.isConfigured(),
+      usedBytes: bodycamStorageBytes,
+      limitBytes: BODYCAM_STORAGE_LIMIT_BYTES,
+      usedGB: Number((bodycamStorageBytes / 1024 / 1024 / 1024).toFixed(2)),
+      limitGB: Number((BODYCAM_STORAGE_LIMIT_BYTES / 1024 / 1024 / 1024).toFixed(2)),
+      full: isBodycamStorageFull()
+    });
+  }
+
   // API: POST /api/bodycam/start (Officer, must already be on duty)
   if (pathname === '/api/bodycam/start' && req.method === 'POST') {
     if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
     if (!r2.isConfigured()) return sendJSON(res, 503, { error: 'Bodycam storage is not configured yet.' });
+    if (isBodycamStorageFull()) {
+      return sendJSON(res, 507, {
+        error: `Bodycam storage limit reached (${(bodycamStorageBytes / 1024 / 1024 / 1024).toFixed(2)}GB / 9.9GB) - recording is disabled until space is freed.`
+      });
+    }
     const db = getBotDb();
     if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
 
@@ -1435,6 +1489,19 @@ const server = http.createServer(async (req, res) => {
     if (!bcSession || bcSession.user_id !== currentSession.id) return sendJSON(res, 403, { error: 'Not your bodycam session' });
     if (bcSession.status !== 'recording') return sendJSON(res, 409, { error: 'This bodycam session is no longer recording' });
 
+    if (isBodycamStorageFull()) {
+      // Close this session out properly (rather than leaving it dangling in
+      // 'recording' forever) instead of just rejecting the chunk.
+      db.prepare("UPDATE bodycam_sessions SET status = 'processing', finished_at = ? WHERE id = ?").run(Date.now(), bodycamId);
+      finalizeBodycamSession(bodycamId).catch(err => {
+        console.error('[BODYCAM FINALIZE ERROR]', bodycamId, err.message);
+        try {
+          getBotDb()?.prepare("UPDATE bodycam_sessions SET status = 'failed', error = ? WHERE id = ?").run(err.message.slice(0, 500), bodycamId);
+        } catch (e) {}
+      });
+      return sendJSON(res, 507, { error: 'storage_limit_reached', message: 'Bodycam storage limit reached - recording stopped automatically.' });
+    }
+
     let chunkBody;
     try {
       chunkBody = await readRawBody(req);
@@ -1446,6 +1513,7 @@ const server = http.createServer(async (req, res) => {
     try {
       await r2.putObject(`bodycam/${bodycamId}/chunk-${String(chunkIndex).padStart(6, '0')}.webm`, chunkBody, 'video/webm');
       db.prepare('UPDATE bodycam_sessions SET chunk_count = chunk_count + 1 WHERE id = ?').run(bodycamId);
+      bodycamStorageBytes += chunkBody.length;
     } catch (e) {
       console.error('[BODYCAM CHUNK UPLOAD ERROR]', e.message);
       return sendJSON(res, 500, { error: 'Failed to store chunk' });
@@ -1575,7 +1643,9 @@ const server = http.createServer(async (req, res) => {
 
       localTrim = await video.trimMp4(localFinal, startSeconds, endSeconds);
       const trimKey = `bodycam/${bodycamId}/trim-${Date.now()}.mp4`;
-      await r2.putObject(trimKey, fs.readFileSync(localTrim), 'video/mp4');
+      const trimBuffer = fs.readFileSync(localTrim);
+      await r2.putObject(trimKey, trimBuffer, 'video/mp4');
+      bodycamStorageBytes += trimBuffer.length;
       const url = await r2.presignedGetUrl(trimKey, 3600, `bodycam-${bodycamId}-clip.mp4`);
       return sendJSON(res, 200, { url });
     } catch (e) {
