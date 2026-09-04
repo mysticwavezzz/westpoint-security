@@ -858,14 +858,22 @@ const server = http.createServer(async (req, res) => {
         });
 
         const weekKey = getWeekKey();
+        // Built from shift_history, not weekly_totals directly - an officer
+        // whose only shift this week was under the 12-minute credit minimum
+        // has no weekly_totals row at all, which used to make them (and
+        // their shift log / bodycam footage) invisible here entirely. They
+        // still show up now, just with 0 credited seconds - the shift
+        // happened and is reviewable, it just didn't count toward quota.
         const topWeekly = db.prepare(`
-          SELECT w.user_id, w.total_seconds, s.roblox_username
-          FROM weekly_totals w
-          LEFT JOIN staff_members s ON w.user_id = s.user_id
-          WHERE w.week_key = ?
-          ORDER BY w.total_seconds DESC
+          SELECT sh.user_id,
+                 COALESCE(wt.total_seconds, 0) AS total_seconds,
+                 COALESCE(s.roblox_username, sh.roblox_username) AS roblox_username
+          FROM (SELECT DISTINCT user_id, roblox_username FROM shift_history WHERE week_key = ?) sh
+          LEFT JOIN weekly_totals wt ON wt.user_id = sh.user_id AND wt.week_key = ?
+          LEFT JOIN staff_members s ON s.user_id = sh.user_id
+          ORDER BY total_seconds DESC
           LIMIT 12
-        `).all(weekKey);
+        `).all(weekKey, weekKey);
 
         topWeekly.forEach(row => {
           leaderboard.push({
