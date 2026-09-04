@@ -47,6 +47,7 @@ const DISCORD_CLIENT_ID = process.env.CLIENT_ID || '1540023346794856540';
 const DISCORD_CLIENT_SECRET = process.env.CLIENT_SECRET;
 const GUILD_ID = process.env.GUILD_ID || '1522793078199419022';
 const DEPT_LOGS_CHANNEL_ID = process.env.DEPARTMENT_LOGS_CHANNEL_ID || '1542980017472929944';
+const AUDIT_LOGS_CHANNEL_ID = process.env.AUDIT_LOGS_CHANNEL_ID || '1540024507761164348';
 
 // Discord validates redirect_uri against exactly what's registered in the app's
 // developer portal, so it must match the domain the request actually arrived
@@ -219,10 +220,47 @@ function getBotDb() {
   if (botDbInstance) return botDbInstance;
   try {
     const Database = require('better-sqlite3');
-    if (fs.existsSync(BOT_DB_PATH)) {
-      botDbInstance = new Database(BOT_DB_PATH, { timeout: 5000 });
-      return botDbInstance;
+    let targetDbPath = BOT_DB_PATH;
+    if (!fs.existsSync(targetDbPath)) {
+      // Fallback for Railway / standalone deployments without direct access to local bot.db
+      targetDbPath = path.join(DATA_DIR, 'portal.db');
     }
+    botDbInstance = new Database(targetDbPath, { timeout: 5000 });
+    botDbInstance.pragma('journal_mode = WAL');
+    botDbInstance.pragma('busy_timeout = 5000');
+    // Ensure all required tables exist
+    botDbInstance.exec(`
+      CREATE TABLE IF NOT EXISTS active_sessions (
+        user_id TEXT PRIMARY KEY,
+        roblox_id TEXT NOT NULL,
+        roblox_username TEXT NOT NULL,
+        start_time INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS weekly_totals (
+        user_id TEXT NOT NULL,
+        week_key TEXT NOT NULL,
+        total_seconds INTEGER DEFAULT 0,
+        PRIMARY KEY (user_id, week_key)
+      );
+      CREATE TABLE IF NOT EXISTS user_action_states (
+        target_user_id TEXT PRIMARY KEY,
+        last_action_type TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS staff_members (
+        user_id TEXT PRIMARY KEY,
+        roblox_id TEXT,
+        roblox_username TEXT,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS weekly_audits (
+        week_key TEXT PRIMARY KEY,
+        audited_at INTEGER NOT NULL
+      );
+    `);
+    return botDbInstance;
   } catch (e) {
     console.error('[DATABASE CONNECT ERROR]', e.message);
   }
@@ -819,7 +857,7 @@ const server = http.createServer(async (req, res) => {
     if (inquiries.length > 500) inquiries.length = 500;
     writeJSONFile('inquiries.json', inquiries);
 
-    // Send notification embed to #administrative-log in Discord
+    // Send notification embed to Discord channel 1540024507761164348
     if (DISCORD_BOT_TOKEN) {
       const discordEmbed = {
         title: `Citizen Inquiry: ${category}`,
@@ -828,7 +866,7 @@ const server = http.createServer(async (req, res) => {
         footer: { text: `Reference ID: ${contactEntry.id} · Westpoint Public Portal` },
         timestamp: contactEntry.timestamp
       };
-      await postDiscordMessage(DEPT_LOGS_CHANNEL_ID, discordEmbed);
+      await postDiscordMessage(AUDIT_LOGS_CHANNEL_ID, discordEmbed);
     }
 
     return sendJSON(res, 200, { success: true, id: contactEntry.id });
