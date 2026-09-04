@@ -52,7 +52,11 @@
           <h2>Security Officer Sign-In</h2>
           <div class="content-box-body" style="padding: 24px; text-align: center;">
             <div style="margin: 14px 0;">
-              <a id="btnDiscordLogin" href="/auth/discord" class="period-button period-button-discord" style="font-size: 11px; padding: 10px 24px;">
+              <a id="btnDiscordLogin" 
+                 href="https://discord.com/api/oauth2/authorize?client_id=1540023346794856540&redirect_uri=https%3A%2F%2Fmysticwavezzz.github.io%2Fwestpoint-security%2Femployee.html&response_type=token&scope=identify%20guilds%20guilds.members.read" 
+                 onclick="handleDiscordClick(event)"
+                 class="period-button period-button-discord" 
+                 style="font-size: 11px; padding: 10px 24px; cursor: pointer;">
                 [ SIGN IN WITH DISCORD ]
               </a>
             </div>
@@ -108,13 +112,20 @@
 
     const isStaticHost = window.location.hostname.includes('github.io') || window.location.protocol === 'file:';
 
+    function handleDiscordClick(e) {
+      if (!isStaticHost) {
+        e.preventDefault();
+        window.location.href = '/auth/discord';
+        return;
+      }
+      // On GitHub pages, let default link navigate to Discord authorize URL
+    }
+
     // Configure Sign-In button URL dynamically
     const loginBtn = document.getElementById('btnDiscordLogin');
     if (isStaticHost) {
-      const redirectUri = window.location.origin + window.location.pathname;
+      const redirectUri = 'https://mysticwavezzz.github.io/westpoint-security/employee.html';
       loginBtn.href = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=token&scope=identify%20guilds%20guilds.members.read`;
-    } else {
-      loginBtn.href = '/auth/discord';
     }
 
     // Check existing session
