@@ -14,8 +14,7 @@ const {
   MessageFlags
 } = require('discord.js');
 const video = require(path.join(__dirname, '..', '..', '..', 'lib', 'video.js'));
-
-const DISCORD_FILE_LIMIT_BYTES = 24 * 1024 * 1024;
+const videoLog = require(path.join(__dirname, '..', '..', '..', 'lib', 'videoLog.js'));
 
 // Accepts plain seconds ("90") or "MM:SS" / "H:MM:SS" style input.
 function parseTimeInput(raw) {
@@ -91,7 +90,7 @@ module.exports = {
       localTrim = await video.trimToMp4(localSource, startSeconds, endSeconds);
 
       const stat = fs.statSync(localTrim);
-      if (stat.size > DISCORD_FILE_LIMIT_BYTES) {
+      if (stat.size > videoLog.DISCORD_FILE_LIMIT_BYTES) {
         return interaction.editReply({
           content: `That range trims to ${(stat.size / 1024 / 1024).toFixed(1)}MB, over Discord's upload limit - pick a shorter range.`
         });
