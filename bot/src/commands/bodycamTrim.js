@@ -85,7 +85,8 @@ module.exports = {
 
     let localSource, localTrim;
     try {
-      localSource = video.tempPath('webm');
+      // Attachments are mp4 now (see postShiftVideoToDiscord), not webm.
+      localSource = video.tempPath('mp4');
       await video.downloadToFile(attachment.url, localSource);
       localTrim = await video.trimToMp4(localSource, startSeconds, endSeconds);
 

@@ -440,18 +440,6 @@
             </div>
           </section>
 
-          <!-- One-time R2 -> Discord Bodycam Migration -->
-          <section class="content-box" style="margin-bottom: 14px; border-color: #E57373;">
-            <h2>Migrate Bodycam Storage to Discord</h2>
-            <div class="content-box-body">
-              <p style="margin-bottom: 12px; font-size: 11.5px; color: #546675;">
-                One-time cleanup: posts every video still sitting in cloud storage to its officer's Discord channel, then deletes it from cloud storage once posted. Cloud storage is only kept afterward for the brief in-progress live view - this does not touch that.
-              </p>
-              <button type="button" class="period-button period-button-secondary" style="border-color: #9E2A2B; color: #9E2A2B;" onclick="runBodycamMigration()" id="btnBodycamMigration">[ MIGRATE &amp; RESET CLOUD STORAGE ]</button>
-              <div id="bodycamMigrationStatus" style="margin-top: 8px; font-size: 11px; white-space: pre-wrap; font-family: monospace;"></div>
-            </div>
-          </section>
-
           <!-- News Bulletin Publisher -->
           <section class="content-box">
             <h2>News Bulletin Publisher (Public Newsroom)</h2>
@@ -525,7 +513,7 @@
       </div>
     </div>
 
-    <!-- Shift History / Playback / Trim / Download (Supervisor+ or self) -->
+    <!-- Shift History / Discord Video Log Links (Supervisor+ or self) -->
     <div id="shiftHistoryModal" style="display: none; position: fixed; inset: 0; background: rgba(15,20,25,0.85); z-index: 500; align-items: center; justify-content: center; padding: 20px;">
       <div style="background: #fff; max-width: 760px; width: 100%; max-height: 88vh; overflow-y: auto; border: 1px solid #CFD8DC;">
         <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: #1E252D; color: #fff; position: sticky; top: 0;">
@@ -536,7 +524,7 @@
           <div id="shiftHistoryList"></div>
 
           <div id="shiftPlaybackPanel" style="display: none; margin-top: 16px; padding-top: 14px; border-top: 1px dashed #CFD8DC;">
-            <p style="font-size: 10px; color: #546675; margin: 0 0 10px;">Recordings are stored as Discord video-log posts - each part below plays and trims independently.</p>
+            <p style="font-size: 10px; color: #546675; margin: 0 0 10px;">Recordings live in Discord - opening a link takes you to that message, where the video plays directly and a Trim Clip button is available.</p>
             <div id="shiftPlaybackParts"></div>
           </div>
         </div>
@@ -1283,8 +1271,7 @@
       if (liveVideo.requestFullscreen) liveVideo.requestFullscreen();
     }
 
-    // ============== SHIFT HISTORY / PLAYBACK / TRIM ==============
-    let shiftHistoryActiveBodycamId = null;
+    // ============== SHIFT HISTORY / DISCORD VIDEO LOG LINKS ==============
 
     async function openShiftHistory(userId, robloxUsername) {
       document.getElementById('shiftHistoryTitle').innerText = 'Shift Log — ' + (robloxUsername || userId);
@@ -1307,7 +1294,7 @@
           let bcButton = '<span style="font-size: 10px; color: #90A4AE;">No bodycam</span>';
           if (s.bodycam) {
             if (s.bodycam.status === 'ready') {
-              bcButton = `<button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 3px 8px;" onclick="watchShiftRecording('${s.bodycam.id}')">[ WATCH / DOWNLOAD ]</button>`;
+              bcButton = `<button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 3px 8px;" onclick="watchShiftRecording('${s.bodycam.id}')">[ WATCH ]</button>`;
             } else if (s.bodycam.status === 'processing') {
               bcButton = '<span class="status-pill status-pill-yellow" style="font-size: 9px;">PROCESSING</span>';
             } else if (s.bodycam.status === 'expired') {
@@ -1336,18 +1323,16 @@
 
     function closeShiftHistory() {
       document.getElementById('shiftHistoryModal').style.display = 'none';
-      document.getElementById('shiftPlaybackParts').querySelectorAll('video').forEach(v => { v.pause(); v.src = ''; });
-      shiftHistoryActiveBodycamId = null;
     }
 
-    // Recordings now live on Discord (see videoLog.js) and can arrive split
-    // into several parts if a shift's video was too big for one upload -
-    // each part gets its own player, download link, and trim form since
-    // trimming operates on that part's own timeline, not the whole shift.
+    // Recordings live entirely on Discord now - "watch" just opens the
+    // message(s) there (video plays inline, Trim Clip button included).
+    // A single-part shift jumps straight to Discord; a split shift shows
+    // which part is which before opening one.
     async function watchShiftRecording(bcId) {
       const panel = document.getElementById('shiftPlaybackPanel');
       const partsEl = document.getElementById('shiftPlaybackParts');
-      partsEl.innerHTML = '<p style="font-size: 11px; color: #546675;">Loading recording from Discord…</p>';
+      partsEl.innerHTML = '<p style="font-size: 11px; color: #546675;">Looking up the Discord video log…</p>';
       panel.style.display = 'block';
       panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
@@ -1355,78 +1340,24 @@
         const res = await fetch(`/api/bodycam/${encodeURIComponent(bcId)}/playback`);
         const data = await res.json();
         if (!res.ok || !data.parts || data.parts.length === 0) {
-          partsEl.innerHTML = '<p style="font-size: 11px; color: #9E2A2B;">' + escapeHtml(data.error || 'Could not load recording.') + '</p>';
+          partsEl.innerHTML = '<p style="font-size: 11px; color: #9E2A2B;">' + escapeHtml(data.error || 'Could not find the video log.') + '</p>';
           return;
         }
-        shiftHistoryActiveBodycamId = bcId;
-        const approxPartSeconds = Math.round((data.durationSeconds || 0) / data.parts.length);
+
+        if (data.parts.length === 1) {
+          window.open(data.parts[0].messageLink, '_blank', 'noopener');
+        }
 
         partsEl.innerHTML = data.parts.map(p => {
-          const label = p.total > 1 ? `Part ${p.part} of ${p.total}` : 'Recording';
+          const label = p.total > 1 ? `Shift Log #${data.shiftNumber} — Part ${p.part} of ${p.total}` : `Shift Log #${data.shiftNumber}`;
           return `
-            <div style="margin-top: ${p.part > 1 ? '18px' : '0'}; padding-top: ${p.part > 1 ? '14px' : '0'}; ${p.part > 1 ? 'border-top: 1px dashed #ECEFF1;' : ''}">
-              <div style="font-size: 10.5px; font-weight: bold; color: #2D3942; margin-bottom: 6px;">${escapeHtml(label)}</div>
-              <video style="width: 100%; background: #000; max-height: 46vh;" controls src="${p.url}"></video>
-              <div style="display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-top: 10px;">
-                <label style="font-size: 10.5px;">Trim Start (sec)
-                  <input type="number" class="trimStartInput" data-part="${p.part}" min="0" value="0" style="width: 90px; display: block;" />
-                </label>
-                <label style="font-size: 10.5px;">Trim End (sec)
-                  <input type="number" class="trimEndInput" data-part="${p.part}" min="0" value="${approxPartSeconds}" style="width: 90px; display: block;" />
-                </label>
-                <button type="button" class="period-button period-button-secondary" style="font-size: 9.5px; padding: 6px 10px;" onclick="exportTrimmedClip(${p.part})">[ EXPORT TRIMMED CLIP ]</button>
-                <a href="${p.url}" download="${escapeHtml(p.filename || 'bodycam.webm')}" class="period-button" style="font-size: 9.5px; padding: 6px 10px;">[ DOWNLOAD FULL RECORDING ]</a>
-              </div>
-              <div class="trimStatus" data-part="${p.part}" style="margin-top: 8px; font-size: 10.5px; color: #546675;"></div>
+            <div style="margin-top: 8px;">
+              <a href="${p.messageLink}" target="_blank" rel="noopener" class="period-button" style="font-size: 9.5px; padding: 6px 10px; display: inline-block;">[ OPEN ${escapeHtml(label.toUpperCase())} IN DISCORD ]</a>
             </div>
           `;
         }).join('');
       } catch (e) {
-        partsEl.innerHTML = '<p style="font-size: 11px; color: #9E2A2B;">Network error loading recording.</p>';
-      }
-    }
-
-    async function exportTrimmedClip(part) {
-      if (!shiftHistoryActiveBodycamId) return;
-      const trimStatus = document.querySelector(`.trimStatus[data-part="${part}"]`);
-      const startSeconds = Number(document.querySelector(`.trimStartInput[data-part="${part}"]`).value) || 0;
-      const endSeconds = Number(document.querySelector(`.trimEndInput[data-part="${part}"]`).value) || 0;
-      if (endSeconds <= startSeconds) {
-        trimStatus.style.color = '#9E2A2B';
-        trimStatus.innerText = 'End time must be after start time.';
-        return;
-      }
-
-      trimStatus.style.color = '#546675';
-      trimStatus.innerText = 'Trimming clip on the server…';
-      try {
-        const res = await fetch(`/api/bodycam/${encodeURIComponent(shiftHistoryActiveBodycamId)}/trim`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ startSeconds, endSeconds, part })
-        });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          trimStatus.style.color = '#9E2A2B';
-          trimStatus.innerText = data.error || 'Trim failed.';
-          return;
-        }
-        // Streamed straight back as a file, not a JSON URL - it's a one-off
-        // export for whoever asked, not something re-hosted anywhere.
-        const blob = await res.blob();
-        const blobUrl = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = blobUrl;
-        a.download = `bodycam-${shiftHistoryActiveBodycamId}-part${part}-clip.mp4`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
-        trimStatus.style.color = '#1B5E20';
-        trimStatus.innerText = 'Clip trimmed and downloaded.';
-      } catch (e) {
-        trimStatus.style.color = '#9E2A2B';
-        trimStatus.innerText = 'Network error trimming clip.';
+        partsEl.innerHTML = '<p style="font-size: 11px; color: #9E2A2B;">Network error looking up the video log.</p>';
       }
     }
 
@@ -1704,71 +1635,6 @@
       } catch (e) {
         statusDiv.style.color = '#9E2A2B';
         statusDiv.innerText = 'Network error resetting quota logs.';
-      }
-    }
-
-    let bodycamMigrationPollTimer = null;
-
-    async function runBodycamMigration() {
-      const statusDiv = document.getElementById('bodycamMigrationStatus');
-      const btn = document.getElementById('btnBodycamMigration');
-      if (!confirm('This posts every video still in cloud storage to its officer\'s Discord channel, then permanently deletes it from cloud storage once posted. Continue?')) return;
-
-      btn.disabled = true;
-      statusDiv.style.color = '#546675';
-      statusDiv.innerText = 'Starting...';
-      try {
-        const res = await fetch('/api/admin/migrate-bodycam-to-discord', { method: 'POST' });
-        const data = await res.json();
-        if (!res.ok) {
-          statusDiv.style.color = '#9E2A2B';
-          statusDiv.innerText = 'Error: ' + (data.error || 'Failed to start migration.');
-          btn.disabled = false;
-          return;
-        }
-        if (bodycamMigrationPollTimer) clearInterval(bodycamMigrationPollTimer);
-        bodycamMigrationPollTimer = setInterval(pollBodycamMigration, 3000);
-        pollBodycamMigration();
-      } catch (e) {
-        statusDiv.style.color = '#9E2A2B';
-        statusDiv.innerText = 'Network error starting migration.';
-        btn.disabled = false;
-      }
-    }
-
-    async function pollBodycamMigration() {
-      const statusDiv = document.getElementById('bodycamMigrationStatus');
-      const btn = document.getElementById('btnBodycamMigration');
-      try {
-        const res = await fetch('/api/admin/migrate-bodycam-to-discord/status');
-        const data = await res.json();
-        const lines = (data.log || []).map(l => new Date(l.t).toLocaleTimeString() + '  ' + l.msg);
-
-        if (data.status === 'running') {
-          statusDiv.style.color = '#546675';
-          statusDiv.innerText = lines.join('\n') || 'Running...';
-          return;
-        }
-
-        if (bodycamMigrationPollTimer) { clearInterval(bodycamMigrationPollTimer); bodycamMigrationPollTimer = null; }
-        btn.disabled = false;
-
-        if (data.status === 'done' && data.result) {
-          statusDiv.style.color = '#1B5E20';
-          statusDiv.innerText = lines.join('\n') +
-            `\n\nDone: ${data.result.migrated.length} migrated, ${data.result.failed.length} failed, ` +
-            `${data.result.orphaned.length} orphaned (${data.result.orphanedObjectsDeleted} object(s) deleted).`;
-        } else if (data.status === 'failed') {
-          statusDiv.style.color = '#9E2A2B';
-          statusDiv.innerText = lines.join('\n') || 'Migration failed.';
-        } else {
-          statusDiv.innerText = lines.join('\n');
-        }
-      } catch (e) {
-        if (bodycamMigrationPollTimer) { clearInterval(bodycamMigrationPollTimer); bodycamMigrationPollTimer = null; }
-        btn.disabled = false;
-        statusDiv.style.color = '#9E2A2B';
-        statusDiv.innerText = 'Network error checking migration status.';
       }
     }
 
