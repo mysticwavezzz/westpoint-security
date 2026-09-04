@@ -2024,12 +2024,22 @@ const server = http.createServer(async (req, res) => {
     }
     const since = parseInt(parsedUrl.query.since, 10);
     const sinceIndex = Number.isNaN(since) ? -1 : since;
+    const isFirstPoll = sinceIndex === -1;
     try {
       const keys = await r2.listObjects(`bodycam/${bodycamId}/chunk-`);
-      const withIndex = keys
+      let withIndex = keys
         .map(k => ({ key: k, index: parseInt((k.match(/chunk-(\d+)\.webm$/) || [])[1] || '-1', 10) }))
         .filter(k => k.index > sinceIndex)
         .sort((a, b) => a.index - b.index);
+      // Joining an already-running shift only needs the latest segment (the
+      // client immediately discards everything else anyway - see
+      // pollBodycamLiveFirst in employee-dashboard.html) - presigning every
+      // chunk recorded so far did real, unnecessary work and shipped a
+      // growing payload the longer a shift had been running before someone
+      // opened the viewer.
+      if (isFirstPoll && withIndex.length > 0) {
+        withIndex = [withIndex[withIndex.length - 1]];
+      }
       const chunks = await Promise.all(withIndex.map(async k => ({
         index: k.index,
         url: await r2.presignedGetUrl(k.key, 300)
