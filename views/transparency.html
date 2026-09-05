@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Public Transparency Report | Westpoint Security</title>
+  <link rel="icon" href="/assets/favicon.png" />
+  <link rel="stylesheet" href="/css/style.css" />
+  <script src="/js/theme.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <div class="page-shell">
+    <nav class="utility-nav" aria-label="Utility navigation">
+      <a href="/terms">TERMS OF SERVICE</a>
+      <span aria-hidden="true"> | </span>
+      <a href="/privacy">PRIVACY POLICY</a>
+      <span aria-hidden="true"> | </span>
+      <a href="/site-map">SITE MAP</a>
+      <span aria-hidden="true"> | </span>
+      <a href="/contact">CONTACT US</a>
+      <span aria-hidden="true"> | </span>
+      <a href="/contact?mode=misconduct">REPORT MISCONDUCT</a>
+      <span aria-hidden="true"> | </span>
+      <a href="/careers">CAREERS</a>
+      <span aria-hidden="true"> | </span>
+      <a href="/employee">EMPLOYEE ACCESS</a>
+    </nav>
+
+    <header class="masthead">
+      <a href="/" class="masthead-identity">
+        <img src="/assets/logo.png" alt="Westpoint Security" width="78" height="78" class="masthead-logo" />
+        <div class="corporate-identity">
+          <span class="corporate-name">Westpoint Security</span>
+          <span class="corporate-branch">Harrison Branch</span>
+        </div>
+      </a>
+      <div class="headquarters-summary">
+        <strong>Regional Office</strong>
+        <span>Harrison County</span>
+      </div>
+    </header>
+
+    <nav class="primary-nav" aria-label="Primary navigation">
+      <a href="/">HOME</a>
+      <a href="/about">ABOUT WESTPOINT</a>
+      <a href="/services">SERVICES</a>
+      <a href="/service-area">SERVICE AREA</a>
+      <a href="/careers">CAREERS</a>
+      <a href="/newsroom">NEWSROOM</a>
+      <a href="/contact">CONTACT &amp; REPORTS</a>
+      <a href="/employee">EMPLOYEE ACCESS</a>
+    </nav>
+
+    <main class="main-layout" id="main-content" tabindex="-1">
+      <article class="main-content">
+        <h1>Public Transparency Report</h1>
+        <p class="lead-copy">
+          Aggregated security metrics, patrol activities, and enforcement actions across Harrison County. In accordance with regional transparency standards, all identifying personnel and citizen data are strictly redacted.
+        </p>
+
+        <!-- Section 1: Breakdown by Action Type -->
+        <section class="content-box">
+          <h2>Security &amp; Patrol Actions Summary</h2>
+          <div class="content-box-body">
+            <div id="actionBarsContainer" style="margin-bottom: 20px;">
+              <p class="table-empty-msg">Loading action metrics...</p>
+            </div>
+            <div class="period-table-wrap">
+              <table class="period-table">
+                <thead>
+                  <tr>
+                    <th>Action Category</th>
+                    <th style="width: 140px; text-align: right;">Total Recorded</th>
+                    <th style="width: 140px; text-align: right;">Distribution</th>
+                  </tr>
+                </thead>
+                <tbody id="actionTableBody">
+                  <tr><td colspan="3" class="table-empty-msg">Loading metrics...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- Section 2: Activity by Month -->
+        <section class="content-box">
+          <h2>Monthly Patrol Activity Trends</h2>
+          <div class="content-box-body">
+            <div class="period-table-wrap">
+              <table class="period-table">
+                <thead>
+                  <tr>
+                    <th>Reporting Period (Month)</th>
+                    <th style="width: 180px; text-align: right;">Total Incidents Handled</th>
+                  </tr>
+                </thead>
+                <tbody id="monthTableBody">
+                  <tr><td colspan="2" class="table-empty-msg">Loading monthly statistics...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </article>
+    </main>
+
+    <footer class="site-footer">
+      <nav aria-label="Footer navigation">
+        <a href="/">HOME</a> | 
+        <a href="/about">ABOUT WESTPOINT</a> | 
+        <a href="/services">SERVICES</a> | 
+        <a href="/service-area">SERVICE AREA</a> | 
+        <a href="/careers">CAREERS</a> | 
+        <a href="/newsroom">NEWSROOM</a> | 
+        <a href="/contact">CONTACT &amp; REPORTS</a> | 
+        <a href="/terms">TERMS OF SERVICE</a> | 
+        <a href="/privacy">PRIVACY POLICY</a> | 
+        <a href="/transparency">TRANSPARENCY</a> | 
+        <a href="/site-map">SITE MAP</a> | 
+        <a href="/employee">EMPLOYEE ACCESS</a>
+      </nav>
+      <p>
+        <strong>Westpoint Security · Harrison Branch</strong><br />
+        104 Garrison Blvd, Suite 300 · Rockdale, Harrison County
+      </p>
+      <p>
+        Copyright &copy; 2026 Westpoint Security Services Inc. All Rights Reserved.<br />
+        Operating under Harrison County Commercial Security License #SEC-1994-WP.
+      </p>
+      <p class="last-updated">Last Updated: September 4, 2026</p>
+    </footer>
+  </div>
+
+  <script>
+    function escapeHtml(str) {
+      return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    async function loadTransparency() {
+      try {
+        const res = await fetch('/api/public/transparency');
+        if (!res.ok) throw new Error('Failed');
+        const data = await res.json();
+        const actionBody = document.getElementById('actionTableBody');
+        const actionBars = document.getElementById('actionBarsContainer');
+        const byAction = data.byAction || [];
+        const totalActions = byAction.reduce((acc, item) => acc + item.count, 0);
+        if (byAction.length === 0) {
+          actionBody.innerHTML = '<tr><td colspan="3" class="table-empty-msg">No incidents recorded to date.</td></tr>';
+          actionBars.innerHTML = '<p style="font-size: 11px; color: #546675;">No recorded patrol actions found.</p>';
+        } else {
+          let rowsHtml = '';
+          let barsHtml = '';
+          byAction.forEach(item => {
+            const pct = totalActions > 0 ? Math.round((item.count / totalActions) * 100) : 0;
+            rowsHtml += '<tr><td><strong>' + escapeHtml(item.action) + '</strong></td><td style="text-align: right; font-family: monospace; font-size: 13px;">' + item.count + '</td><td style="text-align: right; font-weight: 600;">' + pct + '%</td></tr>';
+            barsHtml += '<div style="margin-bottom: 8px;"><div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 2px;"><span>' + escapeHtml(item.action) + '</span><span style="font-weight: bold;">' + item.count + ' (' + pct + '%)</span></div><div style="background: #E2E8F0; height: 10px; border-radius: 2px; overflow: hidden;"><div style="background: #8E2425; height: 100%; width: ' + pct + '%;"></div></div></div>';
+          });
+          actionBody.innerHTML = rowsHtml;
+          actionBars.innerHTML = barsHtml;
+        }
+
+        const monthBody = document.getElementById('monthTableBody');
+        const byMonth = data.byMonth || [];
+        if (byMonth.length === 0) {
+          monthBody.innerHTML = '<tr><td colspan="2" class="table-empty-msg">No monthly activity logged yet.</td></tr>';
+        } else {
+          let monthRows = '';
+          byMonth.forEach(item => {
+            monthRows += '<tr><td><strong>' + escapeHtml(item.month) + '</strong></td><td style="text-align: right; font-family: monospace; font-size: 13px; font-weight: bold;">' + item.count + '</td></tr>';
+          });
+          monthBody.innerHTML = monthRows;
+        }
+      } catch (err) {
+        document.getElementById('actionTableBody').innerHTML = '<tr><td colspan="3" class="table-empty-msg" style="color: #9E2A2B;">Failed to retrieve transparency metrics.</td></tr>';
+        document.getElementById('monthTableBody').innerHTML = '<tr><td colspan="2" class="table-empty-msg" style="color: #9E2A2B;">Failed to retrieve monthly metrics.</td></tr>';
+      }
+    }
+    loadTransparency();
+  </script>
+</body>
+</html>

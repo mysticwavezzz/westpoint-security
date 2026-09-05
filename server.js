@@ -317,7 +317,8 @@ const ROUTE_VIEWS = {
   '/employee': 'employee.html',
   '/employee/dashboard': 'employee-dashboard.html',
   '/site-map': 'site-map.html',
-  '/blotter': 'blotter.html'
+  '/blotter': 'blotter.html',
+  '/transparency': 'transparency.html'
 };
 
 function serveViewFile(res, filename) {
@@ -1093,7 +1094,7 @@ const server = http.createServer(async (req, res) => {
     // page to send the browser back to - contact.html and employee.html both
     // link here, and a citizen signing in from Contact shouldn't get bounced
     // to the employee login page just because they don't hold a staff role.
-    const next = ['employee', 'contact'].includes(parsedUrl.query.next) ? parsedUrl.query.next : 'contact';
+    const next = ['employee', 'contact', 'careers'].includes(parsedUrl.query.next) ? parsedUrl.query.next : 'contact';
     const discordAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${DISCORD_CLIENT_ID}&redirect_uri=${encodeURIComponent(getRedirectUri(req))}&response_type=code&scope=identify&state=${encodeURIComponent(next)}`;
     res.writeHead(302, { 'Location': discordAuthUrl });
     return res.end();
@@ -1102,7 +1103,7 @@ const server = http.createServer(async (req, res) => {
   // 2. DISCORD OAUTH2 CALLBACK
   if (pathname === '/auth/discord/callback') {
     const code = parsedUrl.query.code;
-    const next = ['employee', 'contact'].includes(parsedUrl.query.state) ? parsedUrl.query.state : 'contact';
+    const next = ['employee', 'contact', 'careers'].includes(parsedUrl.query.state) ? parsedUrl.query.state : 'contact';
     if (!code) {
       res.writeHead(302, { 'Location': '/employee?error=no_code' });
       return res.end();
@@ -1189,6 +1190,8 @@ const server = http.createServer(async (req, res) => {
                   let redirectTo;
                   if (next === 'employee') {
                     redirectTo = perms.isOfficer ? '/employee/dashboard' : '/employee?error=unauthorized_role';
+                  } else if (next === 'careers') {
+                    redirectTo = '/careers';
                   } else {
                     redirectTo = '/contact';
                   }
@@ -1352,6 +1355,28 @@ const server = http.createServer(async (req, res) => {
     return sendJSON(res, 200, { blotter: redacted });
   }
 
+  // API: GET /api/public/transparency (Public - monthly totals and action breakdowns)
+  // Strictly aggregate counts only - completely devoid of officer names, suspect IDs, or narratives.
+  if (pathname === '/api/public/transparency' && req.method === 'GET') {
+    const allIncidents = readJSONFile('incidents.json', []);
+    const monthCounts = {};
+    const actionCounts = {};
+
+    allIncidents.forEach(inc => {
+      const dateStr = inc.timestamp ? String(inc.timestamp).split('T')[0] : '';
+      const monthKey = dateStr.slice(0, 7) || '2026-09';
+      monthCounts[monthKey] = (monthCounts[monthKey] || 0) + 1;
+
+      const act = String(inc.action || 'Standard Patrol Action').trim();
+      actionCounts[act] = (actionCounts[act] || 0) + 1;
+    });
+
+    const byMonth = Object.keys(monthCounts).sort().map(m => ({ month: m, count: monthCounts[m] }));
+    const byAction = Object.keys(actionCounts).map(a => ({ action: a, count: actionCounts[a] })).sort((a, b) => b.count - a.count);
+
+    return sendJSON(res, 200, { byMonth, byAction, totalIncidents: allIncidents.length });
+  }
+
   // 6. API: GET /api/officer/incidents
   if (pathname === '/api/officer/incidents' && req.method === 'GET') {
     if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
@@ -1456,6 +1481,28 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
+  // API: GET /api/my-reports (Authenticated Citizen - My Filed Reports)
+  if (pathname === '/api/my-reports' && req.method === 'GET') {
+    if (!currentSession) {
+      return sendJSON(res, 401, { error: 'Unauthorized: Discord login required' });
+    }
+    const allReports = readJSONFile('reports.json', []);
+    // Match by citizen Discord user ID
+    const myReports = allReports
+      .filter(r => r.reporterId === currentSession.id)
+      .map(r => ({
+        id: r.id,
+        type: r.type,
+        officer: r.officer,
+        location: r.location,
+        report: r.report,
+        status: r.status,
+        timestamp: r.timestamp
+      }));
+    return sendJSON(res, 200, { reports: myReports });
+  }
+
+
   // 8B. API: POST /api/contact/staff (Reach Out to Staff Form)
   if (pathname === '/api/contact/staff' && req.method === 'POST') {
     if (!currentSession) {
@@ -1507,6 +1554,172 @@ const server = http.createServer(async (req, res) => {
 
     return sendJSON(res, 200, { success: true, id: contactEntry.id });
   }
+
+  const DEFAULT_POSITIONS_SEED = [
+    {
+      id: "POS-1001",
+      title: "Security Officer (Field Patrol)",
+      department: "Patrol Operations",
+      status: "closed",
+      description: "Primary uniformed security officer role responsible for high-visibility physical security, access control, and incident reporting across Harrison County contracted properties.",
+      createdAt: "2026-09-01T00:00:00.000Z"
+    },
+    {
+      id: "POS-1002",
+      title: "Communications Dispatcher",
+      department: "Dispatch & Communications",
+      status: "closed",
+      description: "Responsible for triaging calls for service, monitoring officer radio traffic, dispatching active patrol units, and logging incident records in the central dispatch system.",
+      createdAt: "2026-09-01T00:00:00.000Z"
+    },
+    {
+      id: "POS-1003",
+      title: "Field Supervisor (Corporal / Sergeant)",
+      department: "Field Supervision",
+      status: "closed",
+      description: "Oversees patrol personnel on active shifts, conducts spot checks on uniform compliance and report quality, and handles elevated field incidents.",
+      createdAt: "2026-09-01T00:00:00.000Z"
+    }
+  ];
+
+  function getPositions() {
+    const existing = readJSONFile('positions.json', null);
+    if (existing && Array.isArray(existing)) return existing;
+    writeJSONFile('positions.json', DEFAULT_POSITIONS_SEED);
+    return DEFAULT_POSITIONS_SEED;
+  }
+
+  // API: GET /api/careers/positions (Public - all positions)
+  if (pathname === '/api/careers/positions' && req.method === 'GET') {
+    const positions = getPositions();
+    return sendJSON(res, 200, positions);
+  }
+
+  // API: POST /api/careers/apply (Authenticated Citizen - apply for open position)
+  if (pathname === '/api/careers/apply' && req.method === 'POST') {
+    if (!currentSession) {
+      return sendJSON(res, 401, { error: 'Authentication Required: Please sign in with Discord.' });
+    }
+    const body = await parseBody(req);
+    const positionId = String(body.positionId || '').trim();
+    const coverLetter = String(body.coverLetter || '').trim().slice(0, 4000);
+
+    if (!positionId) return sendJSON(res, 400, { error: 'Missing position ID' });
+    if (!coverLetter) return sendJSON(res, 400, { error: 'Please provide a cover letter or experience statement.' });
+
+    const positions = getPositions();
+    const targetPos = positions.find(p => p.id === positionId);
+    if (!targetPos || targetPos.status !== 'open') {
+      return sendJSON(res, 400, { error: 'This position is currently closed for applications.' });
+    }
+
+    const appEntry = {
+      id: 'APP-' + Math.floor(100000 + Math.random() * 900000),
+      applicantId: currentSession.id,
+      applicantName: currentSession.displayName || currentSession.username,
+      applicantDiscordUsername: currentSession.username,
+      applicantRobloxUsername: currentSession.robloxUsername || null,
+      positionId: targetPos.id,
+      positionTitle: targetPos.title,
+      coverLetter,
+      status: 'New',
+      timestamp: new Date().toISOString()
+    };
+
+    const applications = readJSONFile('applications.json', []);
+    applications.unshift(appEntry);
+    if (applications.length > 500) applications.length = 500;
+    writeJSONFile('applications.json', applications);
+
+    // Discord Alert
+    if (DISCORD_BOT_TOKEN) {
+      const robloxInfo = currentSession.robloxUsername ? '`' + currentSession.robloxUsername + '`' : 'Unlinked / N/A';
+      const embed = {
+        title: `New Employment Application: ${targetPos.title}`,
+        color: 0x2ECC71,
+        description: `**Applicant:** <@${currentSession.id}> (\`${currentSession.username}\`)\n**Roblox:** ${robloxInfo}\n**Position:** ${targetPos.title} (\`${targetPos.department}\`)\n\n**Statement:**\n> ${coverLetter.slice(0, 1000).replace(/>/g, '\\>')}`,
+        footer: { text: `App ID: ${appEntry.id} · Westpoint Careers` },
+        timestamp: appEntry.timestamp
+      };
+      postDiscordMessage(AUDIT_LOGS_CHANNEL_ID, embed).catch(() => {});
+    }
+
+    return sendJSON(res, 200, { success: true, id: appEntry.id });
+  }
+
+  // API: GET /api/admin/careers/positions (Command Only)
+  if (pathname === '/api/admin/careers/positions' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    const positions = getPositions();
+    return sendJSON(res, 200, { positions });
+  }
+
+  // API: POST /api/admin/careers/positions (Command Only - create/update position)
+  if (pathname === '/api/admin/careers/positions' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    const body = await parseBody(req);
+    const title = String(body.title || 'Security Role').trim().slice(0, 100);
+    const department = String(body.department || 'Operations').trim().slice(0, 100);
+    const status = body.status === 'open' ? 'open' : 'closed';
+    const description = String(body.description || '').trim().slice(0, 2000);
+
+    const positions = getPositions();
+    if (body.id) {
+      const idx = positions.findIndex(p => p.id === body.id);
+      if (idx !== -1) {
+        positions[idx] = { ...positions[idx], title, department, status, description, updatedAt: new Date().toISOString() };
+      } else {
+        positions.push({ id: body.id, title, department, status, description, createdAt: new Date().toISOString() });
+      }
+    } else {
+      const newPos = {
+        id: 'POS-' + Math.floor(1000 + Math.random() * 9000),
+        title,
+        department,
+        status,
+        description,
+        createdAt: new Date().toISOString()
+      };
+      positions.push(newPos);
+    }
+    writeJSONFile('positions.json', positions);
+    return sendJSON(res, 200, { success: true, positions });
+  }
+
+  // API: GET /api/admin/careers/applications (Command Only)
+  if (pathname === '/api/admin/careers/applications' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    const applications = readJSONFile('applications.json', []);
+    return sendJSON(res, 200, { applications });
+  }
+
+  // API: POST /api/admin/careers/applications/update (Command Only - review status)
+  if (pathname === '/api/admin/careers/applications/update' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    const body = await parseBody(req);
+    const applicationId = String(body.applicationId || '').trim();
+    const status = ['New', 'Reviewing', 'Accepted', 'Rejected'].includes(body.status) ? body.status : 'Reviewing';
+
+    const applications = readJSONFile('applications.json', []);
+    const target = applications.find(a => a.id === applicationId);
+    if (!target) return sendJSON(res, 404, { error: 'Application not found' });
+
+    target.status = status;
+    target.reviewedBy = currentSession.displayName;
+    target.reviewedAt = new Date().toISOString();
+    writeJSONFile('applications.json', applications);
+
+    return sendJSON(res, 200, { success: true, record: target });
+  }
+
 
   // 9. API: GET /api/ia/reports (Internal Affairs & Command Only)
   if (pathname === '/api/ia/reports' && req.method === 'GET') {

@@ -19,6 +19,17 @@
   --white: #FFFFFF;
   --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-brand: 'Cinzel', Georgia, serif;
+
+  /* Semantic Theme Tokens */
+  --bg-page: var(--page-gray);
+  --bg-surface: #FFFFFF;
+  --bg-surface-alt: #F8F9FA;
+  --text-primary: var(--text);
+  --text-secondary: #546675;
+  --border-default: #A4B4C2;
+  --border-strong: #788A99;
+  --nav-bg-start: #F0F3F5;
+  --nav-bg-end: #E3E7EA;
 }
 
 *, *::before, *::after {
@@ -26,8 +37,8 @@
 }
 
 html {
-  background: var(--page-gray);
-  color: var(--text);
+  background: var(--bg-page);
+  color: var(--text-primary);
   font-family: var(--font-ui);
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
@@ -36,7 +47,8 @@ html {
 }
 
 body {
-  background: var(--page-gray);
+  background: var(--bg-page);
+  color: var(--text-primary);
   min-width: 280px;
   margin: 0;
   padding: 0;
@@ -76,11 +88,11 @@ a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
 
 /* Page Shell - Subtle outer bevel and depth shadow */
 .page-shell {
-  background: var(--white);
-  border-left: 1px solid #788A99;
-  border-right: 1px solid #788A99;
-  border-top: 1px solid #95A5B5;
-  border-bottom: 2px solid #5A6A78;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border-strong);
+  border-right: 1px solid var(--border-strong);
+  border-top: 1px solid var(--border-default);
+  border-bottom: 2px solid var(--border-strong);
   width: calc(100% - 24px);
   max-width: 940px;
   margin: 14px auto;
@@ -93,11 +105,11 @@ a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
 
 /* Utility Nav - Subtle inset ridge */
 .utility-nav {
-  border-bottom: 1px solid var(--silver-medium);
-  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.7);
-  color: #546675;
+  border-bottom: 1px solid var(--border-default);
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.2);
+  color: var(--text-secondary);
   text-align: right;
-  background: linear-gradient(180deg, #F0F3F5 0%, #E3E7EA 100%);
+  background: linear-gradient(180deg, var(--nav-bg-start) 0%, var(--nav-bg-end) 100%);
   padding: 5px 14px;
   font-size: 10px;
   font-weight: 600;
@@ -105,7 +117,7 @@ a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
 }
 
 .utility-nav a {
-  color: #2D3942;
+  color: var(--text-primary);
   text-decoration: none;
 }
 
@@ -263,7 +275,7 @@ a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
   padding: 18px 20px;
   display: block;
   overflow: hidden;
-  background: #FFFFFF;
+  background: var(--bg-surface);
 }
 
 .main-content {
@@ -272,12 +284,10 @@ a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
 
 /* Home Lead - Inset card framing */
 .home-lead {
-  background: linear-gradient(180deg, #F3F6F8 0%, #E7ECF0 100%);
-  border: 1px solid #A6B7C6;
-  border-top-color: #B5C4D1;
-  border-bottom-color: #8E9FAEC4;
+  background: linear-gradient(180deg, var(--nav-bg-start) 0%, var(--nav-bg-end) 100%);
+  border: 1px solid var(--border-default);
   box-shadow: 
-    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
     0 1px 3px rgba(0, 0, 0, 0.04);
   margin-bottom: 16px;
   padding: 15px 18px;
@@ -285,7 +295,7 @@ a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
 
 .home-lead h1, .main-content h1 {
   border-bottom: 2px solid var(--wp-crimson);
-  color: var(--wp-charcoal-dark);
+  color: var(--text-primary);
   margin: 0 0 8px;
   padding-bottom: 6px;
   font-family: var(--font-brand);
@@ -299,7 +309,7 @@ a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
   margin: 4px 0 0;
   font-size: 13.5px;
   line-height: 1.6;
-  color: #2B3842;
+  color: var(--text-secondary);
 }
 
 /* Feature Grid & Content Boxes with tactile raised headers */
@@ -311,15 +321,13 @@ a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
 }
 
 .content-box {
-  border: 1px solid #95A6B5;
-  border-top-color: #A4B4C2;
-  border-bottom-color: #7B8E9E;
+  border: 1px solid var(--border-default);
   margin-bottom: 14px;
   min-width: 0;
-  background: #FFFFFF;
+  background: var(--bg-surface);
   box-shadow: 
     0 1px 3px rgba(0, 0, 0, 0.06),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+    inset 0 0 0 1px rgba(255, 255, 255, 0.2);
 }
 
 .feature-grid .content-box {
@@ -342,7 +350,8 @@ a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
 }
 
 .content-box-body {
-  background: #F8F9FA;
+  background: var(--bg-surface-alt);
+  color: var(--text-primary);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.02);
   min-height: 60px;
   padding: 12px 14px;
@@ -428,20 +437,18 @@ a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
 }
 
 .period-form fieldset {
-  border: 1px solid #A8B8C7;
-  border-top-color: #BAC7D3;
-  border-bottom-color: #8C9CAE;
+  border: 1px solid var(--border-default);
   box-shadow: 
-    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
     0 1px 2px rgba(0, 0, 0, 0.03);
   margin: 0 0 10px;
   padding: 12px 14px;
-  background: #F8F9FA;
+  background: var(--bg-surface-alt);
   min-width: 0;
 }
 
 .period-form legend {
-  color: var(--wp-charcoal-dark);
+  color: var(--text-primary);
   padding: 0 6px;
   font-family: var(--font-brand);
   font-size: 13.5px;
@@ -449,7 +456,7 @@ a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
 }
 
 .period-form label {
-  color: #263238;
+  color: var(--text-primary);
   display: grid;
   gap: 4px;
   font-size: 11px;
@@ -458,10 +465,9 @@ a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
 }
 
 .period-form input, .period-form select, .period-form textarea {
-  background: var(--white);
-  color: var(--text);
-  border: 1px solid #94A5B5;
-  border-top-color: #6C7D8E;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
   width: 100%;
   max-width: 100%;
@@ -581,11 +587,11 @@ a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
 
 /* Footer */
 .site-footer {
-  color: #4C5B67;
+  color: var(--text-secondary);
   text-align: center;
-  background: linear-gradient(180deg, #ECEFF1 0%, #DFE4E7 100%);
-  border-top: 3px double #788A99;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  background: linear-gradient(180deg, var(--nav-bg-start) 0%, var(--nav-bg-end) 100%);
+  border-top: 3px double var(--border-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
   padding: 14px 16px 12px;
   font-size: 10px;
   line-height: 1.6;
@@ -601,7 +607,7 @@ a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
 }
 
 .site-footer nav a {
-  color: #2D3942;
+  color: var(--text-primary);
   text-decoration: none;
 }
 
@@ -785,11 +791,10 @@ a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
 .period-table-wrap {
   width: 100%;
   overflow-x: auto;
-  border: 1px solid #A4B4C2;
-  border-top-color: #B8C7D3;
-  box-shadow: inset 0 1px 0 #FFFFFF, 0 1px 2px rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--border-default);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 1px 2px rgba(0, 0, 0, 0.05);
   margin-bottom: 12px;
-  background: #FFFFFF;
+  background: var(--bg-surface);
 }
 
 .period-table {
@@ -818,8 +823,9 @@ a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
 
 .period-table td {
   padding: 7px 10px;
-  border-bottom: 1px solid #DCE3E8;
-  border-right: 1px solid #E6ECF0;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-default);
+  border-right: 1px solid var(--border-default);
   vertical-align: middle;
 }
 
@@ -828,7 +834,7 @@ a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
 }
 
 .period-table tr:nth-child(even) td {
-  background: #F8FAFB;
+  background: var(--bg-surface-alt);
 }
 
 .period-table tr:hover td {
@@ -840,4 +846,33 @@ a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
   text-align: center;
   color: #6C7A89;
   font-style: italic;
+}
+
+/* ===================================================
+   DARK THEME OVERRIDES
+   =================================================== */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg-page: #14171A;
+    --bg-surface: #1E252D;
+    --bg-surface-alt: #12161A;
+    --text-primary: #E2E6EA;
+    --text-secondary: #A0AEB8;
+    --border-default: #35434F;
+    --border-strong: #485A6A;
+    --nav-bg-start: #242E37;
+    --nav-bg-end: #1E252D;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg-page: #14171A;
+  --bg-surface: #1E252D;
+  --bg-surface-alt: #12161A;
+  --text-primary: #E2E6EA;
+  --text-secondary: #A0AEB8;
+  --border-default: #35434F;
+  --border-strong: #485A6A;
+  --nav-bg-start: #242E37;
+  --nav-bg-end: #1E252D;
 }

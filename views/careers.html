@@ -3,9 +3,10 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Careers | Westpoint Security</title>
+  <title>Careers &amp; Employment | Westpoint Security</title>
   <link rel="icon" href="/assets/favicon.png" />
   <link rel="stylesheet" href="/css/style.css" />
+  <script src="/js/theme.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -53,22 +54,63 @@
 
     <main class="main-layout" id="main-content" tabindex="-1">
       <article class="main-content">
-        <h1>Careers</h1>
+        <h1>Careers &amp; Employment</h1>
+        <p class="lead-copy">
+          Westpoint Security Services Inc. provides premier private commercial security, perimeter control, and asset protection throughout Harrison County. Review available career opportunities and active recruitment dockets below.
+        </p>
 
-        <section class="content-box" style="max-width: 600px; margin: 24px auto;">
-          <h2>Recruitment Status</h2>
-          <div class="content-box-body" style="padding: 24px; text-align: center;">
-            <div style="margin-bottom: 14px;">
-              <span class="status-pill status-pill-red" style="font-size: 11px; padding: 4px 10px;">APPLICATIONS CLOSED</span>
+        <!-- Current Openings Section -->
+        <section class="content-box">
+          <h2>Available Positions &amp; Recruitment Dockets</h2>
+          <div class="content-box-body">
+            <div id="positionsContainer">
+              <p class="table-empty-msg">Checking active recruitment rosters...</p>
             </div>
-            <p style="font-size: 12px; color: #546675; line-height: 1.6; margin: 0 0 16px;">
-              Westpoint Security Harrison Branch is not actively recruiting or accepting employment applications at this time. Department rosters and security guard quotas are currently full.
-            </p>
-            <p style="font-size: 11px; color: #788A99; margin: 0;">
-              Please monitor our official <a href="/newsroom">Newsroom</a> for announcements regarding future recruitment cycles.
-            </p>
           </div>
         </section>
+
+        <!-- Application Modal / Form Container -->
+        <div id="applicationModal" style="display: none; margin-top: 18px;">
+          <section class="content-box content-box-notice">
+            <h2>Employment Application: <span id="appPositionTitleDisplay">Position</span></h2>
+            <div class="content-box-body">
+              <!-- Auth Gate notice if citizen not signed in -->
+              <div id="appAuthGate" style="display: none; background: #ECEFF1; border: 1px solid #CFD8DC; padding: 14px; text-align: center; margin-bottom: 12px;">
+                <p style="margin: 0 0 10px; font-size: 12px; color: #2D3942;">
+                  <strong>Authentication Required:</strong> You must sign in with your verified Discord account to submit an official employment application.
+                </p>
+                <a href="/auth/discord?next=careers" class="period-button period-button-discord">[ Sign In with Discord ]</a>
+              </div>
+
+              <!-- Authenticated Application Form -->
+              <form class="period-form" id="careersApplyForm" style="display: none;" onsubmit="handleApplySubmit(event)">
+                <input type="hidden" id="applyPositionId" name="positionId" value="" />
+                <fieldset>
+                  <legend>Applicant Identity (Verified)</legend>
+                  <label>Applicant Discord Account (Locked):
+                    <input type="text" id="appDiscordUser" readonly style="background-color: #E2E8F0; color: #334155; cursor: not-allowed;" />
+                  </label>
+                  <label>Linked Roblox Username (Locked):
+                    <input type="text" id="appRobloxUser" readonly style="background-color: #E2E8F0; color: #334155; cursor: not-allowed;" />
+                  </label>
+                </fieldset>
+
+                <fieldset style="margin-top: 10px;">
+                  <legend>Application Statement</legend>
+                  <label>Cover Letter, Experience &amp; Availability:
+                    <textarea name="coverLetter" id="appCoverLetter" required placeholder="Detail your security or law enforcement roleplay experience, activity schedule, and why you are applying to Westpoint Security..."></textarea>
+                  </label>
+                </fieldset>
+
+                <div style="margin-top: 12px; display: flex; gap: 8px; align-items: center;">
+                  <button type="submit" class="period-button" id="btnSubmitApp">[ SUBMIT APPLICATION ]</button>
+                  <button type="button" class="period-button period-button-secondary" onclick="closeApplicationForm()">[ CANCEL ]</button>
+                </div>
+                <div id="appStatusMsg" style="margin-top: 10px; font-weight: bold; font-size: 11px;"></div>
+              </form>
+            </div>
+          </section>
+        </div>
       </article>
     </main>
 
@@ -83,6 +125,7 @@
         <a href="/contact">CONTACT &amp; REPORTS</a> | 
         <a href="/terms">TERMS OF SERVICE</a> | 
         <a href="/privacy">PRIVACY POLICY</a> | 
+        <a href="/transparency">TRANSPARENCY</a> | 
         <a href="/site-map">SITE MAP</a> | 
         <a href="/employee">EMPLOYEE ACCESS</a>
       </nav>
@@ -97,5 +140,145 @@
       <p class="last-updated">Last Updated: September 4, 2026</p>
     </footer>
   </div>
+
+  <script>
+    let currentUser = null;
+    let availablePositions = [];
+
+    function escapeHtml(str) {
+      return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    async function checkAuth() {
+      try {
+        const res = await fetch('/api/auth/me');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.authenticated) {
+            currentUser = data;
+          }
+        }
+      } catch (e) {}
+    }
+
+    async function loadPositions() {
+      const container = document.getElementById('positionsContainer');
+      try {
+        const res = await fetch('/api/careers/positions');
+        if (!res.ok) throw new Error('Failed to fetch positions');
+        availablePositions = await res.json();
+
+        if (!Array.isArray(availablePositions) || availablePositions.length === 0) {
+          container.innerHTML = '<p class="table-empty-msg">No position dockets currently registered.</p>';
+          return;
+        }
+
+        let html = '';
+        availablePositions.forEach(pos => {
+          const isOpen = pos.status === 'open';
+          const pillClass = isOpen ? 'status-pill-green' : 'status-pill-red';
+          const pillText = isOpen ? 'OPEN FOR APPLICATION' : 'APPLICATIONS CLOSED';
+          const buttonHtml = isOpen
+            ? '<button type="button" class="period-button" onclick="openApplicationForm(\'' + escapeHtml(pos.id) + '\')">[ APPLY FOR POSITION ]</button>'
+            : '<span class="status-pill status-pill-red" style="padding: 4px 8px;">CLOSED</span>';
+
+          html += '<div class="content-box" style="margin-bottom: 12px;">' +
+            '<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #E2E8F0; border-bottom: 1px solid #CBD5E1;">' +
+              '<div>' +
+                '<strong style="font-size: 13px; color: #1E252D;">' + escapeHtml(pos.title) + '</strong> ' +
+                '<span style="font-size: 11px; color: #546675; margin-left: 6px;">(' + escapeHtml(pos.department || 'General') + ')</span>' +
+              '</div>' +
+              '<span class="status-pill ' + pillClass + '">' + pillText + '</span>' +
+            '</div>' +
+            '<div class="content-box-body">' +
+              '<p style="margin: 0 0 10px; font-size: 12px; color: #334155; line-height: 1.5;">' + escapeHtml(pos.description || 'No description provided.') + '</p>' +
+              '<div style="display: flex; justify-content: flex-end;">' + buttonHtml + '</div>' +
+            '</div>' +
+          '</div>';
+        });
+
+        container.innerHTML = html;
+      } catch (err) {
+        container.innerHTML = '<p class="table-empty-msg" style="color: #9E2A2B;">Failed to load available positions from the registry.</p>';
+      }
+    }
+
+    function openApplicationForm(posId) {
+      const pos = availablePositions.find(p => p.id === posId);
+      if (!pos) return;
+
+      const modal = document.getElementById('applicationModal');
+      const titleDisplay = document.getElementById('appPositionTitleDisplay');
+      const posIdInput = document.getElementById('applyPositionId');
+      const authGate = document.getElementById('appAuthGate');
+      const form = document.getElementById('careersApplyForm');
+
+      titleDisplay.innerText = pos.title;
+      posIdInput.value = pos.id;
+      modal.style.display = 'block';
+
+      if (currentUser && currentUser.id) {
+        authGate.style.display = 'none';
+        form.style.display = 'grid';
+        document.getElementById('appDiscordUser').value = (currentUser.displayName || currentUser.username) + ' (@' + currentUser.username + ')';
+        document.getElementById('appRobloxUser').value = currentUser.robloxUsername || 'Unlinked / N/A';
+      } else {
+        authGate.style.display = 'block';
+        form.style.display = 'none';
+      }
+
+      modal.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function closeApplicationForm() {
+      document.getElementById('applicationModal').style.display = 'none';
+      document.getElementById('appStatusMsg').innerText = '';
+    }
+
+    async function handleApplySubmit(e) {
+      e.preventDefault();
+      const form = document.getElementById('careersApplyForm');
+      const btn = document.getElementById('btnSubmitApp');
+      const statusDiv = document.getElementById('appStatusMsg');
+
+      statusDiv.style.color = '#546675';
+      statusDiv.innerText = 'Submitting employment dossier...';
+      btn.disabled = true;
+
+      const payload = {
+        positionId: form.positionId.value,
+        coverLetter: form.coverLetter.value.trim()
+      };
+
+      try {
+        const res = await fetch('/api/careers/apply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        btn.disabled = false;
+
+        if (res.ok && data.success) {
+          statusDiv.style.color = 'green';
+          statusDiv.innerText = 'Application Submitted Successfully! Reference ID: ' + (data.id || 'APP-FILED');
+          form.coverLetter.value = '';
+          setTimeout(() => { closeApplicationForm(); }, 3500);
+        } else {
+          statusDiv.style.color = '#9E2A2B';
+          statusDiv.innerText = 'Submission Failed: ' + (data.error || 'Applications are currently closed for this position.');
+        }
+      } catch (err) {
+        btn.disabled = false;
+        statusDiv.style.color = '#9E2A2B';
+        statusDiv.innerText = 'Network error while transmitting application.';
+      }
+    }
+
+    (async function init() {
+      await checkAuth();
+      await loadPositions();
+    })();
+  </script>
 </body>
 </html>

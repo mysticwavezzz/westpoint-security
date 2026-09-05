@@ -608,6 +608,86 @@
               </div>
             </div>
           </section>
+        
+          <!-- Careers & Recruitment Management -->
+          <section class="content-box" style="margin-bottom: 14px;">
+            <h2>Careers &amp; Recruitment Management</h2>
+            <div class="content-box-body">
+              <p style="margin-bottom: 12px; font-size: 11.5px; color: #546675;">
+                Open or close recruitment pipelines and review submitted citizen employment applications.
+              </p>
+
+              <!-- Position Creator / Editor -->
+              <h3 style="margin: 10px 0 6px; font-family: var(--font-brand); font-size: 13px;">Manage Position Dockets</h3>
+              <form class="period-form" id="cmdPositionForm" onsubmit="saveCommandPosition(event)" style="margin-bottom: 14px;">
+                <input type="hidden" id="cmdPosId" name="posId" value="" />
+                <fieldset>
+                  <legend>Create / Edit Position</legend>
+                  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+                    <label>Position Title:
+                      <input type="text" id="cmdPosTitle" name="title" required placeholder="e.g. Armed Patrol Officer" />
+                    </label>
+                    <label>Department:
+                      <input type="text" id="cmdPosDept" name="department" required placeholder="e.g. Patrol Operations" />
+                    </label>
+                    <label>Recruitment Status:
+                      <select id="cmdPosStatus" name="status">
+                        <option value="closed">Closed</option>
+                        <option value="open">Open (Accepting Applications)</option>
+                      </select>
+                    </label>
+                  </div>
+                  <label style="margin-top: 8px;">Role Description:
+                    <textarea id="cmdPosDesc" name="description" required placeholder="Role duties, requirements, expectations..."></textarea>
+                  </label>
+                  <div style="margin-top: 10px; display: flex; gap: 8px;">
+                    <button type="submit" class="period-button" id="btnSaveCmdPos">[ SAVE POSITION ]</button>
+                    <button type="button" class="period-button period-button-secondary" onclick="resetCmdPosForm()">[ NEW POSITION ]</button>
+                  </div>
+                  <div id="cmdPosStatusMsg" style="margin-top: 8px; font-weight: bold; font-size: 11px;"></div>
+                </fieldset>
+              </form>
+
+              <!-- Positions Table -->
+              <div class="period-table-wrap" style="margin-bottom: 16px;">
+                <table class="period-table">
+                  <thead>
+                    <tr>
+                      <th>Position ID</th>
+                      <th>Title</th>
+                      <th>Department</th>
+                      <th>Status</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="cmdPositionsTableBody">
+                    <tr><td colspan="5" class="table-empty-msg">Loading positions...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- Applications Review Table -->
+              <h3 style="margin: 16px 0 6px; font-family: var(--font-brand); font-size: 13px;">Received Applications</h3>
+              <div class="period-table-wrap" style="margin-bottom: 0;">
+                <table class="period-table">
+                  <thead>
+                    <tr>
+                      <th>App ID</th>
+                      <th>Applicant</th>
+                      <th>Position</th>
+                      <th>Date</th>
+                      <th>Statement</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="cmdApplicationsTableBody">
+                    <tr><td colspan="6" class="table-empty-msg">Loading applications...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
         </section>
       </article>
     </main>
@@ -659,6 +739,133 @@
     function handleSignOut(e) {
       if (e) e.preventDefault();
       window.location.href = '/api/auth/logout';
+    }
+
+    
+    // Careers Management JS (Command)
+    async function loadCommandCareers() {
+      try {
+        const [posRes, appRes] = await Promise.all([
+          fetch('/api/admin/careers/positions'),
+          fetch('/api/admin/careers/applications')
+        ]);
+        if (posRes.ok) {
+          const posData = await posRes.json();
+          const pBody = document.getElementById('cmdPositionsTableBody');
+          const positions = posData.positions || [];
+          if (positions.length === 0) {
+            pBody.innerHTML = '<tr><td colspan="5" class="table-empty-msg">No positions found.</td></tr>';
+          } else {
+            let html = '';
+            positions.forEach(p => {
+              const pill = p.status === 'open' ? 'status-pill-green' : 'status-pill-red';
+              html += '<tr>' +
+                '<td><code>' + escapeHtml(p.id) + '</code></td>' +
+                '<td><strong>' + escapeHtml(p.title) + '</strong></td>' +
+                '<td>' + escapeHtml(p.department) + '</td>' +
+                '<td><span class="status-pill ' + pill + '">' + p.status.toUpperCase() + '</span></td>' +
+                '<td><button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 2px 6px;" onclick="editCmdPosition(\'' + escapeHtml(p.id) + '\', \'' + escapeHtml(p.title).replace(/'/g, "\\'") + '\', \'' + escapeHtml(p.department).replace(/'/g, "\\'") + '\', \'' + p.status + '\', \'' + escapeHtml(p.description || '').replace(/'/g, "\\'") + '\')">[ EDIT ]</button></td>' +
+              '</tr>';
+            });
+            pBody.innerHTML = html;
+          }
+        }
+
+        if (appRes.ok) {
+          const appData = await appRes.json();
+          const aBody = document.getElementById('cmdApplicationsTableBody');
+          const apps = appData.applications || [];
+          if (apps.length === 0) {
+            aBody.innerHTML = '<tr><td colspan="6" class="table-empty-msg">No submitted applications found.</td></tr>';
+          } else {
+            let aHtml = '';
+            apps.forEach(a => {
+              const robloxStr = a.applicantRobloxUsername ? ' (' + escapeHtml(a.applicantRobloxUsername) + ')' : '';
+              aHtml += '<tr>' +
+                '<td><code>' + escapeHtml(a.id) + '</code></td>' +
+                '<td><strong>' + escapeHtml(a.applicantName) + '</strong><br><small style="color: #64748B;">' + escapeHtml(a.applicantDiscordUsername) + robloxStr + '</small></td>' +
+                '<td>' + escapeHtml(a.positionTitle) + '</td>' +
+                '<td>' + escapeHtml((a.timestamp || '').split('T')[0]) + '</td>' +
+                '<td><details><summary style="cursor: pointer; color: #8E2425; font-size: 10.5px;">View Cover Letter</summary><p style="margin: 4px 0 0; font-size: 11px; white-space: pre-wrap; color: #334155;">' + escapeHtml(a.coverLetter) + '</p></details></td>' +
+                '<td>' +
+                  '<select style="font-size: 10px; padding: 2px;" onchange="updateCmdAppStatus(\'' + a.id + '\', this.value)">' +
+                    '<option value="New"' + (a.status === 'New' ? ' selected' : '') + '>New</option>' +
+                    '<option value="Reviewing"' + (a.status === 'Reviewing' ? ' selected' : '') + '>Reviewing</option>' +
+                    '<option value="Accepted"' + (a.status === 'Accepted' ? ' selected' : '') + '>Accepted</option>' +
+                    '<option value="Rejected"' + (a.status === 'Rejected' ? ' selected' : '') + '>Rejected</option>' +
+                  '</select>' +
+                '</td>' +
+              '</tr>';
+            });
+            aBody.innerHTML = aHtml;
+          }
+        }
+      } catch (e) {}
+    }
+
+    function editCmdPosition(id, title, dept, status, desc) {
+      document.getElementById('cmdPosId').value = id;
+      document.getElementById('cmdPosTitle').value = title;
+      document.getElementById('cmdPosDept').value = dept;
+      document.getElementById('cmdPosStatus').value = status;
+      document.getElementById('cmdPosDesc').value = desc;
+      document.getElementById('btnSaveCmdPos').innerText = '[ UPDATE POSITION ]';
+    }
+
+    function resetCmdPosForm() {
+      document.getElementById('cmdPosId').value = '';
+      document.getElementById('cmdPosTitle').value = '';
+      document.getElementById('cmdPosDept').value = '';
+      document.getElementById('cmdPosStatus').value = 'closed';
+      document.getElementById('cmdPosDesc').value = '';
+      document.getElementById('btnSaveCmdPos').innerText = '[ SAVE POSITION ]';
+      document.getElementById('cmdPosStatusMsg').innerText = '';
+    }
+
+    async function saveCommandPosition(e) {
+      e.preventDefault();
+      const statusMsg = document.getElementById('cmdPosStatusMsg');
+      statusMsg.style.color = '#546675';
+      statusMsg.innerText = 'Saving position docket...';
+
+      const payload = {
+        id: document.getElementById('cmdPosId').value.trim() || undefined,
+        title: document.getElementById('cmdPosTitle').value.trim(),
+        department: document.getElementById('cmdPosDept').value.trim(),
+        status: document.getElementById('cmdPosStatus').value,
+        description: document.getElementById('cmdPosDesc').value.trim()
+      };
+
+      try {
+        const res = await fetch('/api/admin/careers/positions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          statusMsg.style.color = 'green';
+          statusMsg.innerText = 'Position saved successfully.';
+          resetCmdPosForm();
+          loadCommandCareers();
+        } else {
+          statusMsg.style.color = '#9E2A2B';
+          statusMsg.innerText = 'Failed: ' + (data.error || 'Server error');
+        }
+      } catch (err) {
+        statusMsg.style.color = '#9E2A2B';
+        statusMsg.innerText = 'Network error saving position.';
+      }
+    }
+
+    async function updateCmdAppStatus(appId, status) {
+      try {
+        await fetch('/api/admin/careers/applications/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ applicationId: appId, status })
+        });
+      } catch (e) {}
     }
 
     // Switch Tabs

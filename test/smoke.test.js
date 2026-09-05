@@ -32,6 +32,27 @@ function get(pathname) {
   });
 }
 
+function post(pathname, body = {}, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const dataStr = JSON.stringify(body);
+    const req = http.request(BASE_URL + pathname, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(dataStr),
+        ...headers
+      }
+    }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode, body: data }));
+    });
+    req.on('error', reject);
+    req.write(dataStr);
+    req.end();
+  });
+}
+
 before(async () => {
   serverProcess = spawn(process.execPath, ['server.js'], {
     cwd: path.join(__dirname, '..'),
@@ -118,4 +139,45 @@ test('command-only endpoints reject unauthenticated requests', async () => {
 test('unknown routes 404', async () => {
   const res = await get('/this-route-does-not-exist-xyz');
   assert.strictEqual(res.status, 404);
+});
+
+test('GET /transparency serves public transparency page', async () => {
+  const res = await get('/transparency');
+  assert.strictEqual(res.status, 200);
+});
+
+test('GET /careers serves public careers page', async () => {
+  const res = await get('/careers');
+  assert.strictEqual(res.status, 200);
+});
+
+test('GET /api/public/transparency returns aggregated counts with no leaked identities', async () => {
+  const res = await get('/api/public/transparency');
+  assert.strictEqual(res.status, 200);
+  const body = JSON.parse(res.body);
+  assert.ok(Array.isArray(body.byMonth));
+  assert.ok(Array.isArray(body.byAction));
+  // Guarantee no individual identifying keys leaked
+  assert.ok(!('officer' in body));
+  assert.ok(!('suspect' in body));
+  assert.ok(!('summary' in body));
+});
+
+test('GET /api/careers/positions returns positions list', async () => {
+  const res = await get('/api/careers/positions');
+  assert.strictEqual(res.status, 200);
+  const body = JSON.parse(res.body);
+  assert.ok(Array.isArray(body));
+  assert.ok(body.length >= 1);
+  assert.ok(body.every(p => p.status === 'closed' || p.status === 'open'));
+});
+
+test('POST /api/careers/apply rejects unauthenticated applicants', async () => {
+  const res = await post('/api/careers/apply', { positionId: 'POS-1001', coverLetter: 'Test application' });
+  assert.strictEqual(res.status, 401);
+});
+
+test('GET /api/my-reports rejects unauthenticated requests', async () => {
+  const res = await get('/api/my-reports');
+  assert.strictEqual(res.status, 401);
 });
