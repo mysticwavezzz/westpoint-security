@@ -134,13 +134,13 @@
               </div>
             </section>
 
-            <!-- FTO Progress (shown if the officer has an active assignment as trainee) -->
+            <!-- My FTO Progress - strictly tag-gated: only loaded/shown for officers holding the "FTO Trainee" flag (see loadOfficerSession) -->
             <section class="content-box" id="ftoProgressBox" style="display: none;">
               <h2>My FTO Progress</h2>
               <div class="content-box-body" id="ftoProgressBody"></div>
             </section>
 
-            <!-- FTO Trainer Sign-Off - hidden unless the officer holds the "FTO Trainer" flag or is a Supervisor+ (server still enforces the real check independently) -->
+            <!-- FTO Trainer Sign-Off - strictly tag-gated: only shown to officers holding the "FTO Trainer" flag (see loadOfficerSession) -->
             <section class="content-box" id="ftoSignoffBox" style="display: none;">
               <h2>FTO Trainer Sign-Off</h2>
               <div class="content-box-body">
@@ -1143,8 +1143,18 @@
         // manual fallback if they go looking, but the UI isn't handed to
         // them by default just for holding a rank).
         const myFlags = data.flags || [];
+        window.currentFlags = myFlags;
         if (myFlags.includes('FTO Trainer')) {
           document.getElementById('ftoSignoffBox').style.display = 'block';
+        }
+
+        // My FTO Progress: same strict tag rule - only attempt to load/show
+        // it for officers actually flagged "FTO Trainee". Previously this
+        // loaded unconditionally on every page load and just hid itself if
+        // /api/fto/my-progress came back empty, which is the wrong default -
+        // nobody without the tag should see this section at all, ever.
+        if (myFlags.includes('FTO Trainee')) {
+          loadMyFtoProgress();
         }
       } catch (e) {
         console.error('Session loading error:', e);
@@ -2950,9 +2960,16 @@
 
     async function loadMyFtoProgress() {
       try {
+        const box = document.getElementById('ftoProgressBox');
+        // Belt-and-suspenders: enforced here too (not just at the call
+        // site) so no caller of this function - now or later - can show
+        // the box for someone without the "FTO Trainee" flag.
+        if (!(window.currentFlags || []).includes('FTO Trainee')) {
+          box.style.display = 'none';
+          return;
+        }
         const res = await fetch('/api/fto/my-progress');
         const data = await res.json();
-        const box = document.getElementById('ftoProgressBox');
         const body = document.getElementById('ftoProgressBody');
         if (!data.assignment) {
           box.style.display = 'none';
@@ -3435,7 +3452,6 @@
     updateActionFields();
     refreshBodycamStorageStatus();
     loadMyStats();
-    loadMyFtoProgress();
     loadFtoStageOptions();
     initDashboardWidgets();
     (function initSettingsToggles() {
