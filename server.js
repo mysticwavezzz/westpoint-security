@@ -406,6 +406,38 @@ function getBotDb() {
     botDbInstance = new Database(targetDbPath, { timeout: 5000 });
     botDbInstance.pragma('journal_mode = WAL');
     botDbInstance.pragma('busy_timeout = 5000');
+
+    // A prior, since-reverted implementation attempt created several of the
+    // tables below (fto_assignments, fto_signoffs, staff_flags,
+    // push_subscriptions) with different column names before being rolled
+    // back - the revert only reset the deployed CODE, not the production
+    // database file on the persistent Volume, so those old-shaped tables
+    // are still sitting there. `CREATE TABLE IF NOT EXISTS` is a no-op
+    // against an existing table regardless of its columns, so every query
+    // against the columns THIS code expects was throwing "no such column"
+    // (confirmed via the structured-logging Discord alerts). Rename any
+    // mismatched table aside (never drop - keeps whatever old data existed,
+    // just out of the way) so a correctly-shaped table gets created fresh.
+    function repairIncompatibleTable(tableName, requiredColumns) {
+      try {
+        const info = botDbInstance.prepare(`PRAGMA table_info(${tableName})`).all();
+        if (info.length === 0) return; // doesn't exist yet - CREATE TABLE IF NOT EXISTS handles it
+        const existingCols = new Set(info.map(c => c.name));
+        const missing = requiredColumns.filter(c => !existingCols.has(c));
+        if (missing.length > 0) {
+          const backupName = `${tableName}_legacy_${Date.now()}`;
+          botDbInstance.exec(`ALTER TABLE ${tableName} RENAME TO ${backupName}`);
+          console.error(`[SCHEMA REPAIR] Renamed incompatible table "${tableName}" to "${backupName}" (missing columns: ${missing.join(', ')}) - a fresh one will be created.`);
+        }
+      } catch (e) {
+        console.error('[SCHEMA REPAIR ERROR]', tableName, e.message);
+      }
+    }
+    repairIncompatibleTable('fto_assignments', ['id', 'trainee_user_id', 'trainer_user_id', 'status', 'started_at']);
+    repairIncompatibleTable('fto_signoffs', ['id', 'assignment_id', 'stage_name', 'signed_off_by', 'signed_off_at']);
+    repairIncompatibleTable('staff_flags', ['user_id', 'flag_name', 'set_by', 'set_at']);
+    repairIncompatibleTable('push_subscriptions', ['user_id', 'endpoint', 'p256dh', 'auth']);
+
     // Ensure all required tables exist
     botDbInstance.exec(`
       CREATE TABLE IF NOT EXISTS active_sessions (
