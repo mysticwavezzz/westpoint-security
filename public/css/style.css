@@ -20,12 +20,9 @@
   --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-brand: 'Cinzel', Georgia, serif;
 
-  /* Semantic dark-mode tokens. Most of this file's colors are still literal
-     hex values (gradients, status pills, tier badges) - these tokens cover
-     the structural chrome that actually reads as "light background" or
-     "dark background" (page, content boxes, tables, forms, footer). The
-     already-dark elements (masthead, primary-nav, dash-nav-bar, buttons)
-     are untouched since they already work in both themes unchanged. */
+  /* Semantic layout tokens for structural chrome (page, content boxes,
+     tables, forms, footer). Most of this file's colors are still literal
+     hex values (gradients, status pills, tier badges). */
   --bg-page: var(--page-gray);
   --bg-surface: #FFFFFF;
   --bg-surface-alt: #F8F9FA;
@@ -37,36 +34,6 @@
   --nav-bg-end: #E3E7EA;
   --table-row-alt: #F8FAFB;
   --table-row-hover: #EDF3F7;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg-page: #14171A;
-    --bg-surface: #1E252D;
-    --bg-surface-alt: #12161A;
-    --text-primary: #E2E6EA;
-    --text-secondary: #A0AEB8;
-    --border-default: #35434F;
-    --border-strong: #485A6A;
-    --nav-bg-start: #262E36;
-    --nav-bg-end: #1B2127;
-    --table-row-alt: #1A2027;
-    --table-row-hover: #232B33;
-  }
-}
-
-:root[data-theme="dark"] {
-  --bg-page: #14171A;
-  --bg-surface: #1E252D;
-  --bg-surface-alt: #12161A;
-  --text-primary: #E2E6EA;
-  --text-secondary: #A0AEB8;
-  --border-default: #35434F;
-  --border-strong: #485A6A;
-  --nav-bg-start: #262E36;
-  --nav-bg-end: #1B2127;
-  --table-row-alt: #1A2027;
-  --table-row-hover: #232B33;
 }
 
 *, *::before, *::after {

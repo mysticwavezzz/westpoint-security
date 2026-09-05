@@ -85,6 +85,13 @@ test('GET /api/health reports ok', async () => {
   assert.strictEqual(typeof body.uptimeSeconds, 'number');
 });
 
+test('GET /api/auth/me reports unauthenticated with no session', async () => {
+  const res = await get('/api/auth/me');
+  assert.strictEqual(res.status, 401);
+  const body = JSON.parse(res.body);
+  assert.strictEqual(body.authenticated, false);
+});
+
 test('GET / serves the public homepage', async () => {
   const res = await get('/');
   assert.strictEqual(res.status, 200);

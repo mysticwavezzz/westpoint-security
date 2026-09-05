@@ -1480,7 +1480,15 @@ const server = http.createServer(async (req, res) => {
   // 3. API: GET /api/auth/me
   if (pathname === '/api/auth/me') {
     if (!currentSession) return sendJSON(res, 401, { authenticated: false });
-    return sendJSON(res, 200, { authenticated: true, ...currentSession });
+    // Own staff flags (e.g. "FTO Trainer") - queried fresh each call rather
+    // than cached on the session, since Command can add/remove flags at any
+    // time and the dashboard uses this to decide which sections to show.
+    let flags = [];
+    try {
+      const db = getBotDb();
+      if (db) flags = db.prepare('SELECT flag_name FROM staff_flags WHERE user_id = ?').all(currentSession.id).map(r => r.flag_name);
+    } catch (e) {}
+    return sendJSON(res, 200, { authenticated: true, ...currentSession, flags });
   }
 
   // 4. API: GET /api/auth/logout

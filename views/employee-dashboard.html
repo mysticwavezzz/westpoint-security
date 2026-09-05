@@ -140,8 +140,8 @@
               <div class="content-box-body" id="ftoProgressBody"></div>
             </section>
 
-            <!-- FTO Trainer Sign-Off (any officer can try - server enforces they're actually the assigned trainer or a Supervisor) -->
-            <section class="content-box">
+            <!-- FTO Trainer Sign-Off - hidden unless the officer holds the "FTO Trainer" flag or is a Supervisor+ (server still enforces the real check independently) -->
+            <section class="content-box" id="ftoSignoffBox" style="display: none;">
               <h2>FTO Trainer Sign-Off</h2>
               <div class="content-box-body">
                 <form class="period-form" id="ftoSignoffForm" onsubmit="submitFtoSignoff(event)">
@@ -435,11 +435,12 @@
                       <th>Discord User ID</th>
                       <th>Last Active</th>
                       <th>Flags</th>
+                      <th></th>
                       <th id="staffDirectoryManageCol" style="display: none;"></th>
                     </tr>
                   </thead>
                   <tbody id="staffDirectoryTableBody">
-                    <tr><td colspan="4" class="table-empty-msg">Loading staff directory...</td></tr>
+                    <tr><td colspan="7" class="table-empty-msg">Loading staff directory...</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -1116,6 +1117,16 @@
 
         if (perms.isInternalAffairs) {
           document.getElementById('tabBtnIA').style.display = 'inline-block';
+        }
+
+        // FTO Trainer Sign-Off: only shown to officers who actually hold the
+        // "FTO Trainer" flag, or Supervisor+ (who can sign off any
+        // assignment as oversight) - the server enforces the real check
+        // independently either way, this just avoids showing a form to
+        // everyone that would 403 for almost all of them.
+        const myFlags = data.flags || [];
+        if (myFlags.includes('FTO Trainer') || perms.isSupervisor) {
+          document.getElementById('ftoSignoffBox').style.display = 'block';
         }
       } catch (e) {
         console.error('Session loading error:', e);
@@ -2047,7 +2058,7 @@
         : staffDirectoryAll;
 
       if (filtered.length === 0) {
-        table.innerHTML = `<tr><td colspan="6" class="table-empty-msg">${staffDirectoryAll.length === 0 ? 'No staff members tracked yet.' : 'No staff match that search.'}</td></tr>`;
+        table.innerHTML = `<tr><td colspan="7" class="table-empty-msg">${staffDirectoryAll.length === 0 ? 'No staff members tracked yet.' : 'No staff match that search.'}</td></tr>`;
         pagination.innerHTML = '';
         return;
       }
@@ -2056,17 +2067,27 @@
       const currentPage = Math.min(Math.max(1, page), totalPages);
       const pageRows = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
       const isCommand = !!(window.currentPermissions && window.currentPermissions.isCommand);
+      const isSupervisor = !!(window.currentPermissions && window.currentPermissions.isSupervisor);
+      const myUserId = officerSession ? officerSession.id : null;
 
-      table.innerHTML = pageRows.map(s => `
+      table.innerHTML = pageRows.map(s => {
+        // Anyone can view their own shift history/tags; viewing someone
+        // else's requires Supervisor+ (matches the /api/officer/:id/shifts
+        // gate server-side - shown here so the button isn't offered to
+        // people who'd just get a 403 from it).
+        const canViewShifts = s.userId === myUserId || isSupervisor;
+        return `
         <tr>
           <td><strong>${escapeHtml(s.robloxUsername)}</strong></td>
           <td>${escapeHtml(s.rank)}</td>
           <td style="font-family: monospace; font-size: 11px;">${escapeHtml(s.userId)}</td>
           <td style="font-size: 10.5px;">${s.lastActive ? new Date(s.lastActive).toLocaleString() : 'N/A'}</td>
           <td>${(s.flags || []).map(f => `<span class="status-pill status-pill-purple" style="margin-right: 3px;">${escapeHtml(f)}</span>`).join('') || '<span style="color: #90A4AE; font-size: 10px;">None</span>'}</td>
+          <td>${canViewShifts ? `<button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 3px 8px;" onclick="openShiftHistory('${escapeHtml(s.userId)}', '${escapeHtml(s.robloxUsername).replace(/'/g, "\\'")}')">[ VIEW SHIFTS ]</button>` : ''}</td>
           ${isCommand ? `<td><button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 3px 8px;" onclick="openManageFlags('${escapeHtml(s.userId)}', '${escapeHtml(s.robloxUsername).replace(/'/g, "\\'")}')">[ MANAGE FLAGS ]</button></td>` : ''}
         </tr>
-      `).join('');
+      `;
+      }).join('');
 
       pagination.innerHTML = `
         <span>Showing ${pageRows.length} of ${filtered.length} ${filtered.length === 1 ? 'staff member' : 'staff members'}${term ? ' (filtered)' : ''}</span>
@@ -2977,6 +2998,7 @@
           <p style="margin: 0 0 6px;"><strong>Commendations Received:</strong> ${data.commendationsReceived}
             <span style="font-size: 9.5px; color: #90A4AE;">(best-effort match by name - not guaranteed exact)</span>
           </p>
+          <button type="button" class="period-button period-button-secondary" style="margin-top: 4px;" onclick="openShiftHistory(officerSession.id, officerSession.robloxUsername)">[ MY SHIFT HISTORY &amp; BODYCAM TAGS ]</button>
         `;
       } catch (e) {
         body.innerHTML = '<p style="font-size: 11px; color: #9E2A2B;">Network error loading stats.</p>';
