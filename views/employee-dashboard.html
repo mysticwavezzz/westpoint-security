@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/css/style.css" />
   <link rel="manifest" href="/manifest.json" />
   <meta name="theme-color" content="#8E2425" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -635,6 +636,41 @@
             </div>
           </section>
 
+          <!-- Analytics Dashboard -->
+          <section class="content-box" style="margin-bottom: 14px;">
+            <h2>Analytics &mdash; Last 8 Weeks</h2>
+            <div class="content-box-body">
+              <div id="analyticsLoadingMsg" style="font-size: 11.5px; color: #546675;">Loading analytics...</div>
+              <div id="analyticsCharts" style="display: none; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;" class="feature-grid">
+                <div><canvas id="chartTotalHours" height="180"></canvas></div>
+                <div><canvas id="chartActiveOfficers" height="180"></canvas></div>
+                <div><canvas id="chartCompliance" height="180"></canvas></div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Flags & Alerts -->
+          <section class="content-box" style="margin-bottom: 14px;">
+            <h2>Flags &amp; Alerts</h2>
+            <div class="content-box-body">
+              <h3 style="margin: 0 0 8px; font-family: var(--font-brand); font-size: 13px;">Quota Risk (3+ weeks running under target)</h3>
+              <div class="period-table-wrap" style="margin-bottom: 16px;">
+                <table class="period-table">
+                  <thead><tr><th>Officer</th><th style="text-align: center;">Weeks Under Quota</th><th></th></tr></thead>
+                  <tbody id="quotaRiskTableBody"><tr><td colspan="3" class="table-empty-msg">Loading...</td></tr></tbody>
+                </table>
+              </div>
+
+              <h3 style="margin: 0 0 8px; font-family: var(--font-brand); font-size: 13px;">Internal Affairs Cases Open 7+ Days</h3>
+              <div class="period-table-wrap">
+                <table class="period-table">
+                  <thead><tr><th>Case No.</th><th>Type</th><th>Status</th><th style="text-align: center;">Age (Days)</th><th></th></tr></thead>
+                  <tbody id="staleIaTableBody"><tr><td colspan="5" class="table-empty-msg">Loading...</td></tr></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
           <!-- Channel Config -->
           <section class="content-box" style="margin-bottom: 14px;">
             <h2>Channel Configuration</h2>
@@ -898,6 +934,8 @@
         loadChannelConfig();
         loadCareersAdmin();
         loadFtoAssignments();
+        loadAnalytics();
+        loadFlags();
       }
       if (tabKey === 'settings') {
         buttons[buttons.length - 1]?.classList.add('is-active');
@@ -2272,6 +2310,82 @@
       } catch (e) {
         statusDiv.style.color = '#9E2A2B';
         statusDiv.innerText = 'Network error assigning FTO.';
+      }
+    }
+
+    let analyticsCharts = {};
+    async function loadAnalytics() {
+      const loadingMsg = document.getElementById('analyticsLoadingMsg');
+      const chartsWrap = document.getElementById('analyticsCharts');
+      try {
+        const res = await fetch('/api/admin/analytics');
+        const data = await res.json();
+        if (!res.ok) {
+          loadingMsg.innerText = data.error || 'Failed to load analytics.';
+          return;
+        }
+        const weeks = data.weeks || [];
+        const labels = weeks.map(w => w.weekKey);
+        loadingMsg.style.display = 'none';
+        chartsWrap.style.display = 'grid';
+
+        const chartDefs = [
+          { id: 'chartTotalHours', label: 'Total Duty Hours', data: weeks.map(w => w.totalHours), color: '#8E2425' },
+          { id: 'chartActiveOfficers', label: 'Active Officers', data: weeks.map(w => w.activeOfficers), color: '#546675' },
+          { id: 'chartCompliance', label: 'Quota Compliance %', data: weeks.map(w => w.compliancePercent), color: '#2E7D32' }
+        ];
+        chartDefs.forEach(def => {
+          if (analyticsCharts[def.id]) analyticsCharts[def.id].destroy();
+          const ctx = document.getElementById(def.id);
+          if (!ctx || typeof Chart === 'undefined') return;
+          analyticsCharts[def.id] = new Chart(ctx, {
+            type: 'line',
+            data: { labels, datasets: [{ label: def.label, data: def.data, borderColor: def.color, backgroundColor: def.color + '33', tension: 0.25, fill: true }] },
+            options: { responsive: true, plugins: { legend: { display: true } }, scales: { y: { beginAtZero: true } } }
+          });
+        });
+      } catch (e) {
+        loadingMsg.innerText = 'Error loading analytics.';
+      }
+    }
+
+    async function loadFlags() {
+      const quotaTable = document.getElementById('quotaRiskTableBody');
+      const iaTable = document.getElementById('staleIaTableBody');
+      try {
+        const res = await fetch('/api/admin/flags/quota-risk');
+        const data = await res.json();
+        const flagged = data.flagged || [];
+        quotaTable.innerHTML = flagged.length
+          ? flagged.map(f => `
+              <tr>
+                <td>${escapeHtml(f.robloxUsername)}</td>
+                <td style="text-align: center;"><span class="status-pill status-pill-red">${f.weeksUnderQuota}</span></td>
+                <td><a href="#" class="more-link" onclick="switchTab('staff-directory'); return false;">[ VIEW IN STAFF DIRECTORY ]</a></td>
+              </tr>
+            `).join('')
+          : '<tr><td colspan="3" class="table-empty-msg">No officers currently at risk.</td></tr>';
+      } catch (e) {
+        quotaTable.innerHTML = '<tr><td colspan="3" class="table-empty-msg">Error loading quota risk.</td></tr>';
+      }
+
+      try {
+        const res = await fetch('/api/admin/flags/stale-ia');
+        const data = await res.json();
+        const stale = data.stale || [];
+        iaTable.innerHTML = stale.length
+          ? stale.map(s => `
+              <tr>
+                <td><strong>${escapeHtml(s.id)}</strong></td>
+                <td>${escapeHtml(s.type)}</td>
+                <td>${escapeHtml(s.status)}</td>
+                <td style="text-align: center;"><span class="status-pill status-pill-yellow">${s.ageDays}</span></td>
+                <td><a href="#" class="more-link" onclick="switchTab('ia'); setTimeout(() => openIAReview('${s.id}'), 200); return false;">[ OPEN ]</a></td>
+              </tr>
+            `).join('')
+          : '<tr><td colspan="5" class="table-empty-msg">No stale IA cases.</td></tr>';
+      } catch (e) {
+        iaTable.innerHTML = '<tr><td colspan="5" class="table-empty-msg">Error loading stale IA cases.</td></tr>';
       }
     }
 

@@ -2257,6 +2257,114 @@ const server = http.createServer(async (req, res) => {
     return sendJSON(res, 200, { success: true });
   }
 
+  // API: GET /api/admin/analytics (Command Only - weekly time-series for
+  // the Analytics dashboard: total duty hours, distinct active officers,
+  // and quota compliance % for each of the last 8 week keys, oldest first)
+  if (pathname === '/api/admin/analytics' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+    const WEEKS_BACK = 8;
+    const weeks = [];
+    try {
+      for (let i = WEEKS_BACK - 1; i >= 0; i--) {
+        const d = new Date();
+        d.setUTCDate(d.getUTCDate() - i * 7);
+        const weekKey = getWeekKey(d);
+
+        const totalRow = db.prepare('SELECT COALESCE(SUM(total_seconds), 0) AS total FROM weekly_totals WHERE week_key = ?').get(weekKey);
+        const activeRow = db.prepare('SELECT COUNT(DISTINCT user_id) AS n FROM shift_history WHERE week_key = ?').get(weekKey);
+        const complianceRows = db.prepare(`
+          SELECT sh.user_id,
+                 COALESCE(wt.total_seconds, 0) AS totalSeconds,
+                 COALESCE(s.quota_target_seconds, 900) AS quotaTargetSeconds
+          FROM (SELECT DISTINCT user_id FROM shift_history WHERE week_key = ?) sh
+          LEFT JOIN weekly_totals wt ON wt.user_id = sh.user_id AND wt.week_key = ?
+          LEFT JOIN staff_members s ON s.user_id = sh.user_id
+        `).all(weekKey, weekKey);
+        const compliancePercent = complianceRows.length
+          ? Math.round((complianceRows.filter(r => r.totalSeconds >= r.quotaTargetSeconds).length / complianceRows.length) * 100)
+          : 0;
+
+        weeks.push({
+          weekKey,
+          totalHours: Math.round((totalRow.total / 3600) * 10) / 10,
+          activeOfficers: activeRow.n,
+          compliancePercent
+        });
+      }
+    } catch (e) {
+      console.error('[ANALYTICS ERROR]', e.message);
+      return sendJSON(res, 500, { error: 'Failed to compute analytics.' });
+    }
+    return sendJSON(res, 200, { weeks });
+  }
+
+  // API: GET /api/admin/flags/quota-risk (Command Only - officers under
+  // their quota target for every one of the last N weeks running, not just
+  // the current week)
+  if (pathname === '/api/admin/flags/quota-risk' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+    const QUOTA_RISK_WEEKS = 3;
+    try {
+      const perOfficer = new Map();
+      for (let i = 0; i < QUOTA_RISK_WEEKS; i++) {
+        const d = new Date();
+        d.setUTCDate(d.getUTCDate() - i * 7);
+        const weekKey = getWeekKey(d);
+        const rows = db.prepare(`
+          SELECT sh.user_id AS userId,
+                 COALESCE(s.roblox_username, sh.roblox_username) AS robloxUsername,
+                 COALESCE(wt.total_seconds, 0) AS totalSeconds,
+                 COALESCE(s.quota_target_seconds, 900) AS quotaTargetSeconds
+          FROM (SELECT DISTINCT user_id, roblox_username FROM shift_history WHERE week_key = ?) sh
+          LEFT JOIN weekly_totals wt ON wt.user_id = sh.user_id AND wt.week_key = ?
+          LEFT JOIN staff_members s ON s.user_id = sh.user_id
+        `).all(weekKey, weekKey);
+        for (const row of rows) {
+          const entry = perOfficer.get(row.userId) || { userId: row.userId, robloxUsername: row.robloxUsername || 'Officer', weeksChecked: 0, weeksUnderQuota: 0 };
+          entry.weeksChecked += 1;
+          if (row.totalSeconds < row.quotaTargetSeconds) entry.weeksUnderQuota += 1;
+          perOfficer.set(row.userId, entry);
+        }
+      }
+      const flagged = Array.from(perOfficer.values())
+        .filter(e => e.weeksChecked >= QUOTA_RISK_WEEKS && e.weeksUnderQuota === QUOTA_RISK_WEEKS)
+        .map(({ userId, robloxUsername, weeksUnderQuota }) => ({ userId, robloxUsername, weeksUnderQuota }));
+      return sendJSON(res, 200, { flagged });
+    } catch (e) {
+      console.error('[QUOTA RISK ERROR]', e.message);
+      return sendJSON(res, 500, { error: 'Failed to compute quota risk.' });
+    }
+  }
+
+  // API: GET /api/admin/flags/stale-ia (Command Only - IA cases open longer
+  // than a threshold and still unresolved)
+  if (pathname === '/api/admin/flags/stale-ia' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    const STALE_IA_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
+    const RESOLVED_STATUSES = ['Resolved - Action Taken', 'Unfounded / Dismissed'];
+    const now = Date.now();
+    const stale = readJSONFile('reports.json', [])
+      .filter(r => !RESOLVED_STATUSES.includes(r.status) && now - new Date(r.timestamp).getTime() > STALE_IA_THRESHOLD_MS)
+      .map(r => ({
+        id: r.id,
+        type: r.type,
+        status: r.status,
+        ageDays: Math.floor((now - new Date(r.timestamp).getTime()) / (24 * 60 * 60 * 1000))
+      }))
+      .sort((a, b) => b.ageDays - a.ageDays);
+    return sendJSON(res, 200, { stale });
+  }
+
   // API: POST /api/admin/reset-quota-logs (Command Only - wipe weekly quota
   // totals and shift history for a clean slate. Does not touch active
   // sessions, the staff roster, or bodycam video logs on Discord - those

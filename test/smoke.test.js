@@ -187,6 +187,21 @@ test('GET /sw.js is served as a static file', async () => {
   assert.strictEqual(res.status, 200);
 });
 
+test('GET /api/admin/analytics rejects unauthenticated requests', async () => {
+  const res = await get('/api/admin/analytics');
+  assert.strictEqual(res.status, 403);
+});
+
+test('GET /api/admin/flags/quota-risk rejects unauthenticated requests', async () => {
+  const res = await get('/api/admin/flags/quota-risk');
+  assert.strictEqual(res.status, 403);
+});
+
+test('GET /api/admin/flags/stale-ia rejects unauthenticated requests', async () => {
+  const res = await get('/api/admin/flags/stale-ia');
+  assert.strictEqual(res.status, 403);
+});
+
 test('GET /manifest.json is served and parses as valid JSON', async () => {
   const res = await get('/manifest.json');
   assert.strictEqual(res.status, 200);
