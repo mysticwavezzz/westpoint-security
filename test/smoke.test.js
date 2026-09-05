@@ -202,6 +202,31 @@ test('GET /api/admin/flags/stale-ia rejects unauthenticated requests', async () 
   assert.strictEqual(res.status, 403);
 });
 
+test('GET /api/admin/bodycam/review-queue rejects unauthenticated requests', async () => {
+  const res = await get('/api/admin/bodycam/review-queue');
+  assert.strictEqual(res.status, 403);
+});
+
+test('GET /api/admin/bodycam/search rejects unauthenticated requests', async () => {
+  const res = await get('/api/admin/bodycam/search?tag=Arrest');
+  assert.strictEqual(res.status, 403);
+});
+
+test('POST /api/admin/bodycam/audit-randomizer/run rejects unauthenticated requests', async () => {
+  const res = await post('/api/admin/bodycam/audit-randomizer/run', {});
+  assert.strictEqual(res.status, 403);
+});
+
+test('GET /api/admin/bodycam/audit-randomizer/history rejects unauthenticated requests', async () => {
+  const res = await get('/api/admin/bodycam/audit-randomizer/history');
+  assert.strictEqual(res.status, 403);
+});
+
+test('POST /api/bodycam/:id/tags rejects unauthenticated requests', async () => {
+  const res = await post('/api/bodycam/nonexistent/tags', { tags: ['Arrest'] });
+  assert.strictEqual(res.status, 401);
+});
+
 test('GET /manifest.json is served and parses as valid JSON', async () => {
   const res = await get('/manifest.json');
   assert.strictEqual(res.status, 200);

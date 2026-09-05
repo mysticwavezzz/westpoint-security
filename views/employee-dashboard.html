@@ -81,7 +81,8 @@
           <button type="button" class="dash-tab-btn" id="tabBtnIA" style="display: none;" onclick="switchTab('ia')">4. Internal Affairs Desk</button>
           <button type="button" class="dash-tab-btn" id="tabBtnStaffDirectory" onclick="switchTab('staff-directory')">5. Staff Directory</button>
           <button type="button" class="dash-tab-btn" id="tabBtnCommand" style="display: none;" onclick="switchTab('command')">6. Command Center</button>
-          <button type="button" class="dash-tab-btn" onclick="switchTab('settings')">7. Settings</button>
+          <button type="button" class="dash-tab-btn" id="tabBtnReviewQueue" style="display: none;" onclick="switchTab('review-queue')">7. Review Queue</button>
+          <button type="button" class="dash-tab-btn" onclick="switchTab('settings')">8. Settings</button>
         </div>
 
         <!-- ==============================================
@@ -789,7 +790,94 @@
         </section>
 
         <!-- ==============================================
-             TAB 7: SETTINGS
+             TAB 7: SUPERVISOR REVIEW QUEUE
+             ============================================== -->
+        <section id="tab-review-queue" class="dash-section">
+          <section class="content-box" style="margin-bottom: 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+              <h2 style="margin: 0;">Bodycam Review Queue</h2>
+              <button type="button" class="period-button period-button-secondary" onclick="loadReviewQueue()">[ REFRESH ]</button>
+            </div>
+            <div class="content-box-body">
+              <p style="margin-bottom: 10px; font-size: 11.5px; color: #546675;">
+                Recordings awaiting review or flagged (including clips picked by the Audit Randomizer below). Watching happens directly in Discord.
+              </p>
+              <div class="period-table-wrap">
+                <table class="period-table">
+                  <thead>
+                    <tr>
+                      <th>Officer</th>
+                      <th>Started</th>
+                      <th>Duration</th>
+                      <th>Tags</th>
+                      <th style="text-align: center;">Status</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="reviewQueueTableBody">
+                    <tr><td colspan="6" class="table-empty-msg">Loading review queue...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <section class="content-box" style="margin-bottom: 14px;">
+            <h2>Cross-Officer Shift Log Search</h2>
+            <div class="content-box-body">
+              <form class="period-form" onsubmit="event.preventDefault(); runBodycamSearch();">
+                <fieldset>
+                  <legend>Filters</legend>
+                  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px;">
+                    <label>Date:
+                      <input type="date" id="bcSearchDate" />
+                    </label>
+                    <label>Tag:
+                      <select id="bcSearchTag">
+                        <option value="">Any</option>
+                      </select>
+                    </label>
+                    <label>Officer Discord ID:
+                      <input type="text" id="bcSearchUserId" placeholder="Optional" />
+                    </label>
+                  </div>
+                </fieldset>
+                <button type="submit" class="period-button">[ SEARCH ]</button>
+              </form>
+              <div class="period-table-wrap" style="margin-top: 12px;">
+                <table class="period-table">
+                  <thead>
+                    <tr><th>Officer</th><th>Started</th><th>Status</th><th>Duration</th><th>Tags</th><th></th></tr>
+                  </thead>
+                  <tbody id="bcSearchResultsBody">
+                    <tr><td colspan="6" class="table-empty-msg">Set filters and search.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <section class="content-box">
+            <h2>Bodycam Audit Randomizer</h2>
+            <div class="content-box-body">
+              <p style="margin-bottom: 10px; font-size: 11.5px; color: #546675;">
+                Runs automatically every Saturday, randomly flagging a handful of this week's recordings for mandatory review - a compliance spot-check, not a full watch-everything requirement. Can also be run on demand.
+              </p>
+              <button type="button" class="period-button period-button-secondary" onclick="runAuditRandomizer()">[ RUN RANDOMIZER NOW ]</button>
+              <div id="auditRandomizerStatus" style="margin-top: 8px; font-weight: bold; font-size: 11px;"></div>
+              <h3 style="margin: 16px 0 8px; font-family: var(--font-brand); font-size: 13px;">Recent Selections</h3>
+              <div class="period-table-wrap">
+                <table class="period-table">
+                  <thead><tr><th>Officer</th><th>Selected</th><th style="text-align: center;">Status</th></tr></thead>
+                  <tbody id="auditHistoryTableBody"><tr><td colspan="3" class="table-empty-msg">Loading...</td></tr></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <!-- ==============================================
+             TAB 8: SETTINGS
              ============================================== -->
         <section id="tab-settings" class="dash-section">
           <div class="feature-grid">
@@ -895,6 +983,7 @@
     let officerSession = null;
     let shiftInterval = null;
     let shiftSeconds = 0;
+    const BODYCAM_TAGS = ['Traffic Stop', 'Pursuit', 'Arrest', 'Use of Force', 'Standard Patrol', 'Other'];
 
     function handleSignOut(e) {
       if (e) e.preventDefault();
@@ -936,6 +1025,11 @@
         loadFtoAssignments();
         loadAnalytics();
         loadFlags();
+      }
+      if (tabKey === 'review-queue') {
+        document.getElementById('tabBtnReviewQueue')?.classList.add('is-active');
+        loadReviewQueue();
+        loadAuditHistory();
       }
       if (tabKey === 'settings') {
         buttons[buttons.length - 1]?.classList.add('is-active');
@@ -1002,6 +1096,9 @@
         } else {
           badgeRole.className = 'tier-badge tier-badge-officer';
           document.getElementById('officerClearanceText').innerText = 'Standard Guard Clearance';
+        }
+        if (perms.isSupervisor) {
+          document.getElementById('tabBtnReviewQueue').style.display = 'inline-block';
         }
 
         if (perms.isInternalAffairs) {
@@ -1695,14 +1792,31 @@
               bcButton = '<span style="font-size: 10px; color: #90A4AE;">Recording…</span>';
             }
           }
+          const bcId = s.bodycam ? s.bodycam.id : null;
+          const currentTags = s.bodycam ? (s.bodycam.tags || []) : [];
+          const tagRow = bcId ? `
+            <div style="margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
+              ${BODYCAM_TAGS.map(tag => `
+                <label style="font-size: 9.5px; display: flex; align-items: center; gap: 3px; cursor: pointer;">
+                  <input type="checkbox" class="bc-tag-check" data-bc-id="${bcId}" value="${escapeHtml(tag)}" ${currentTags.includes(tag) ? 'checked' : ''} />
+                  ${escapeHtml(tag)}
+                </label>
+              `).join('')}
+              <button type="button" class="period-button period-button-secondary" style="font-size: 8px; padding: 2px 6px;" onclick="saveBodycamTags('${bcId}')">[ SAVE TAGS ]</button>
+              <span id="tagSaveStatus-${bcId}" style="font-size: 9px; font-weight: bold;"></span>
+            </div>
+          ` : '';
           return `
-            <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #ECEFF1; font-size: 11.5px;">
-              <div>
-                <strong>${new Date(s.startTime).toLocaleDateString()}</strong>
-                <span style="color: #546675;"> ${new Date(s.startTime).toLocaleTimeString()} → ${new Date(s.endTime).toLocaleTimeString()}</span>
-                <div style="font-family: monospace; font-size: 10.5px; color: #2D3942;">${escapeHtml(s.durationFormatted)} · Week ${escapeHtml(s.weekKey)}</div>
+            <div style="padding: 8px 0; border-bottom: 1px solid #ECEFF1; font-size: 11.5px;">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                  <strong>${new Date(s.startTime).toLocaleDateString()}</strong>
+                  <span style="color: #546675;"> ${new Date(s.startTime).toLocaleTimeString()} → ${new Date(s.endTime).toLocaleTimeString()}</span>
+                  <div style="font-family: monospace; font-size: 10.5px; color: #2D3942;">${escapeHtml(s.durationFormatted)} · Week ${escapeHtml(s.weekKey)}</div>
+                </div>
+                <div>${bcButton}</div>
               </div>
-              <div>${bcButton}</div>
+              ${tagRow}
             </div>
           `;
         }).join('');
@@ -1713,6 +1827,32 @@
 
     function closeShiftHistory() {
       document.getElementById('shiftHistoryModal').style.display = 'none';
+    }
+
+    async function saveBodycamTags(bcId) {
+      const checks = document.querySelectorAll(`.bc-tag-check[data-bc-id="${bcId}"]`);
+      const tags = Array.from(checks).filter(c => c.checked).map(c => c.value);
+      const statusEl = document.getElementById('tagSaveStatus-' + bcId);
+      try {
+        const res = await fetch(`/api/bodycam/${encodeURIComponent(bcId)}/tags`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tags })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          statusEl.style.color = '#9E2A2B';
+          statusEl.innerText = data.error || 'Failed to save.';
+          return;
+        }
+        statusEl.style.color = '#1B5E20';
+        statusEl.innerText = 'Saved.';
+        playClickSound();
+        setTimeout(() => { statusEl.innerText = ''; }, 2000);
+      } catch (e) {
+        statusEl.style.color = '#9E2A2B';
+        statusEl.innerText = 'Network error.';
+      }
     }
 
     // Recordings live entirely on Discord now - "watch" just opens the
@@ -1748,6 +1888,121 @@
         }).join('');
       } catch (e) {
         partsEl.innerHTML = '<p style="font-size: 11px; color: #9E2A2B;">Network error looking up the video log.</p>';
+      }
+    }
+
+    // ============== SUPERVISOR REVIEW QUEUE / SEARCH / AUDIT RANDOMIZER ==============
+
+    function reviewStatusPill(status) {
+      if (status === 'reviewed') return '<span class="status-pill status-pill-green">REVIEWED</span>';
+      if (status === 'flagged') return '<span class="status-pill status-pill-red">FLAGGED</span>';
+      return '<span class="status-pill status-pill-yellow">UNREVIEWED</span>';
+    }
+
+    async function loadReviewQueue() {
+      const table = document.getElementById('reviewQueueTableBody');
+      try {
+        const res = await fetch('/api/admin/bodycam/review-queue');
+        const data = await res.json();
+        const queue = data.queue || [];
+        table.innerHTML = queue.length ? queue.map(item => `
+          <tr>
+            <td>${escapeHtml(item.robloxUsername)}</td>
+            <td style="font-size: 10.5px;">${new Date(item.startedAt).toLocaleString()}</td>
+            <td style="font-family: monospace; font-size: 10.5px;">${escapeHtml(item.durationFormatted)}</td>
+            <td style="font-size: 10px;">${item.tags.length ? item.tags.map(escapeHtml).join(', ') : '<span style="color:#90A4AE;">none</span>'}${item.wasAuditSelected ? ' <span class="status-pill status-pill-purple" style="font-size:8px;">AUDIT</span>' : ''}</td>
+            <td style="text-align: center;">${reviewStatusPill(item.reviewStatus)}</td>
+            <td style="display: flex; gap: 4px; flex-wrap: wrap;">
+              ${item.discordLink ? `<a href="${item.discordLink}" target="_blank" rel="noopener" class="period-button period-button-secondary" style="font-size: 8px; padding: 3px 6px;">[ OPEN ]</a>` : ''}
+              <button type="button" class="period-button period-button-secondary" style="font-size: 8px; padding: 3px 6px;" onclick="reviewAction('${item.id}', 'flag')">[ FLAG ]</button>
+              <button type="button" class="period-button" style="font-size: 8px; padding: 3px 6px;" onclick="reviewAction('${item.id}', 'mark-reviewed')">[ MARK REVIEWED ]</button>
+            </td>
+          </tr>
+        `).join('') : '<tr><td colspan="6" class="table-empty-msg">Queue is empty - nothing awaiting review.</td></tr>';
+      } catch (e) {
+        table.innerHTML = '<tr><td colspan="6" class="table-empty-msg">Error loading review queue.</td></tr>';
+      }
+    }
+
+    async function reviewAction(bcId, action) {
+      try {
+        await fetch(`/api/bodycam/${encodeURIComponent(bcId)}/review`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action })
+        });
+        playClickSound();
+        loadReviewQueue();
+      } catch (e) {}
+    }
+
+    async function runBodycamSearch() {
+      const table = document.getElementById('bcSearchResultsBody');
+      table.innerHTML = '<tr><td colspan="6" class="table-empty-msg">Searching...</td></tr>';
+      const params = new URLSearchParams();
+      const date = document.getElementById('bcSearchDate').value;
+      const tag = document.getElementById('bcSearchTag').value;
+      const userId = document.getElementById('bcSearchUserId').value.trim();
+      if (date) params.set('date', date);
+      if (tag) params.set('tag', tag);
+      if (userId) params.set('userId', userId);
+      try {
+        const res = await fetch('/api/admin/bodycam/search?' + params.toString());
+        const data = await res.json();
+        const results = data.results || [];
+        table.innerHTML = results.length ? results.map(r => `
+          <tr>
+            <td>${escapeHtml(r.robloxUsername)}</td>
+            <td style="font-size: 10.5px;">${new Date(r.startedAt).toLocaleString()}</td>
+            <td>${escapeHtml(r.status)}</td>
+            <td style="font-family: monospace; font-size: 10.5px;">${escapeHtml(r.durationFormatted)}</td>
+            <td style="font-size: 10px;">${r.tags.length ? r.tags.map(escapeHtml).join(', ') : '<span style="color:#90A4AE;">none</span>'}</td>
+            <td>${r.discordLink ? `<a href="${r.discordLink}" target="_blank" rel="noopener" class="period-button period-button-secondary" style="font-size: 8px; padding: 3px 6px;">[ OPEN ]</a>` : ''}</td>
+          </tr>
+        `).join('') : '<tr><td colspan="6" class="table-empty-msg">No matching recordings.</td></tr>';
+      } catch (e) {
+        table.innerHTML = '<tr><td colspan="6" class="table-empty-msg">Error searching.</td></tr>';
+      }
+    }
+
+    async function runAuditRandomizer() {
+      const statusEl = document.getElementById('auditRandomizerStatus');
+      statusEl.style.color = '#546675';
+      statusEl.innerText = 'Running...';
+      try {
+        const res = await fetch('/api/admin/bodycam/audit-randomizer/run', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) {
+          statusEl.style.color = '#9E2A2B';
+          statusEl.innerText = data.error || 'Failed to run randomizer.';
+          return;
+        }
+        statusEl.style.color = '#1B5E20';
+        statusEl.innerText = data.selected.length ? `Selected ${data.selected.length} recording(s) for mandatory review.` : 'No eligible recordings to select from.';
+        playClickSound();
+        loadReviewQueue();
+        loadAuditHistory();
+      } catch (e) {
+        statusEl.style.color = '#9E2A2B';
+        statusEl.innerText = 'Network error.';
+      }
+    }
+
+    async function loadAuditHistory() {
+      const table = document.getElementById('auditHistoryTableBody');
+      try {
+        const res = await fetch('/api/admin/bodycam/audit-randomizer/history');
+        const data = await res.json();
+        const history = data.history || [];
+        table.innerHTML = history.length ? history.map(h => `
+          <tr>
+            <td>${escapeHtml(h.robloxUsername)}</td>
+            <td style="font-size: 10.5px;">${new Date(h.auditSelectedAt).toLocaleString()}</td>
+            <td style="text-align: center;">${reviewStatusPill(h.reviewStatus)}</td>
+          </tr>
+        `).join('') : '<tr><td colspan="3" class="table-empty-msg">No audit selections yet.</td></tr>';
+      } catch (e) {
+        table.innerHTML = '<tr><td colspan="3" class="table-empty-msg">Error loading audit history.</td></tr>';
       }
     }
 
@@ -3079,6 +3334,16 @@
     (function initSettingsToggles() {
       const audioToggle = document.getElementById('audioFeedbackToggle');
       if (audioToggle) audioToggle.checked = isAudioFeedbackEnabled();
+    })();
+    (function populateBodycamTagFilter() {
+      const select = document.getElementById('bcSearchTag');
+      if (!select) return;
+      BODYCAM_TAGS.forEach(tag => {
+        const opt = document.createElement('option');
+        opt.value = tag;
+        opt.innerText = tag;
+        select.appendChild(opt);
+      });
     })();
   </script>
 </body>

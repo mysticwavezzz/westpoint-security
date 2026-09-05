@@ -212,6 +212,12 @@ const FTO_STAGES = ['Radio Procedures', 'Traffic Stops', 'Report Writing', 'Use 
 // the rest are Command's to apply manually from the Staff Directory.
 const STAFF_FLAGS = ['Awaiting Field Eval', 'On Leave', 'Under Review', 'FTO Trainee', 'FTO Trainer'];
 
+// Fixed bodycam clip tag vocabulary, for faster search/filtering.
+const BODYCAM_TAGS = ['Traffic Stop', 'Pursuit', 'Arrest', 'Use of Force', 'Standard Patrol', 'Other'];
+
+// How many ready recordings the Bodycam Audit Randomizer selects per run.
+const AUDIT_RANDOMIZER_COUNT = 3;
+
 function setStaffFlag(userId, flagName, setBy) {
   getBotDb().prepare(`
     INSERT INTO staff_flags (user_id, flag_name, set_by, set_at) VALUES (?, ?, ?, ?)
@@ -494,6 +500,21 @@ function getBotDb() {
     } catch (e) {}
     try {
       botDbInstance.exec('ALTER TABLE staff_members ADD COLUMN last_known_rank TEXT');
+    } catch (e) {}
+    try {
+      botDbInstance.exec('ALTER TABLE bodycam_sessions ADD COLUMN tags TEXT');
+    } catch (e) {}
+    try {
+      botDbInstance.exec("ALTER TABLE bodycam_sessions ADD COLUMN review_status TEXT DEFAULT 'unreviewed'");
+    } catch (e) {}
+    try {
+      botDbInstance.exec('ALTER TABLE bodycam_sessions ADD COLUMN reviewed_by TEXT');
+    } catch (e) {}
+    try {
+      botDbInstance.exec('ALTER TABLE bodycam_sessions ADD COLUMN reviewed_at INTEGER');
+    } catch (e) {}
+    try {
+      botDbInstance.exec('ALTER TABLE bodycam_sessions ADD COLUMN audit_selected_at INTEGER');
     } catch (e) {}
     return botDbInstance;
   } catch (e) {
@@ -806,6 +827,39 @@ async function sendQuotaReminders() {
 // Runs once a day; only actually pushes to officers who are both under quota
 // and have an active push subscription (most days this is a fast no-op).
 setInterval(sendQuotaReminders, 24 * 60 * 60 * 1000);
+
+// Bodycam Audit Randomizer: picks a small random sample of 'ready'
+// recordings that haven't already been through this and flags them for
+// mandatory supervisor review - a lightweight compliance spot-check rather
+// than requiring every clip to be watched. Reuses the existing
+// review_status column/queue rather than a separate system.
+function runBodycamAuditRandomizer(count = AUDIT_RANDOMIZER_COUNT) {
+  const db = getBotDb();
+  if (!db) return [];
+  const candidates = db.prepare(`
+    SELECT id FROM bodycam_sessions
+    WHERE status = 'ready' AND audit_selected_at IS NULL
+  `).all();
+  if (candidates.length === 0) return [];
+  // Fisher-Yates shuffle, take the first N - avoids bias toward
+  // whatever SQLite's default row order happens to be.
+  const pool = candidates.slice();
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  const chosen = pool.slice(0, count);
+  const now = Date.now();
+  const update = db.prepare("UPDATE bodycam_sessions SET audit_selected_at = ?, review_status = 'flagged' WHERE id = ?");
+  chosen.forEach(c => update.run(now, c.id));
+  return chosen.map(c => c.id);
+}
+// Runs weekly (Saturday, matching the bot's existing weekly-audit schedule
+// pattern) so mandatory audits happen on a predictable cadence rather than
+// only when someone remembers to click the manual button.
+setInterval(() => {
+  if (new Date().getUTCDay() === 6) runBodycamAuditRandomizer();
+}, 24 * 60 * 60 * 1000);
 
 // Fetch Guild Member via Bot Token
 function fetchGuildMember(discordUserId) {
@@ -2879,6 +2933,153 @@ const server = http.createServer(async (req, res) => {
     return sendJSON(res, 200, { shiftNumber: bcSession.shift_number, parts, durationSeconds: bcSession.duration_seconds });
   }
 
+  // API: POST /api/bodycam/:id/tags (session owner or Supervisor+ - clip tagging)
+  if (pathname.startsWith('/api/bodycam/') && pathname.endsWith('/tags') && req.method === 'POST') {
+    if (!currentSession) return sendJSON(res, 401, { error: 'Unauthorized' });
+    const bodycamId = pathname.split('/')[3];
+    const db = getBotDb();
+    const bcSession = db && db.prepare('SELECT * FROM bodycam_sessions WHERE id = ?').get(bodycamId);
+    if (!bcSession) return sendJSON(res, 404, { error: 'Not found' });
+    if (bcSession.user_id !== currentSession.id && !currentSession.permissions.isSupervisor) {
+      return sendJSON(res, 403, { error: 'Access denied' });
+    }
+    const body = await parseBody(req);
+    const tags = Array.isArray(body.tags) ? body.tags : [];
+    if (tags.some(t => !BODYCAM_TAGS.includes(t))) {
+      return sendJSON(res, 400, { error: 'Invalid tag. Valid tags: ' + BODYCAM_TAGS.join(', ') });
+    }
+    db.prepare('UPDATE bodycam_sessions SET tags = ? WHERE id = ?').run(JSON.stringify(tags), bodycamId);
+    return sendJSON(res, 200, { success: true, tags });
+  }
+
+  // API: GET /api/admin/bodycam/review-queue (Supervisor+ - clips awaiting
+  // or flagged for review, most recent first)
+  if (pathname === '/api/admin/bodycam/review-queue' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isSupervisor) {
+      return sendJSON(res, 403, { error: 'Access Denied: Supervisor rank required.' });
+    }
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+    const rows = db.prepare(`
+      SELECT b.*, COALESCE(s.roblox_username, b.user_id) AS roblox_username
+      FROM bodycam_sessions b
+      LEFT JOIN staff_members s ON s.user_id = b.user_id
+      WHERE b.status = 'ready' AND b.review_status IN ('unreviewed', 'flagged')
+      ORDER BY b.started_at DESC
+      LIMIT 100
+    `).all();
+    return sendJSON(res, 200, {
+      queue: rows.map(r => ({
+        id: r.id,
+        userId: r.user_id,
+        robloxUsername: r.roblox_username,
+        startedAt: r.started_at,
+        durationSeconds: r.duration_seconds,
+        durationFormatted: formatDuration(r.duration_seconds || 0),
+        reviewStatus: r.review_status || 'unreviewed',
+        tags: r.tags ? JSON.parse(r.tags) : [],
+        wasAuditSelected: !!r.audit_selected_at,
+        discordLink: r.discord_channel_id ? `https://discord.com/channels/${VIDEO_LOG_GUILD_ID}/${r.discord_channel_id}` : null
+      }))
+    });
+  }
+
+  // API: POST /api/bodycam/:id/review (Supervisor+ - flag for review or mark reviewed)
+  if (pathname.startsWith('/api/bodycam/') && pathname.endsWith('/review') && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isSupervisor) {
+      return sendJSON(res, 403, { error: 'Access Denied: Supervisor rank required.' });
+    }
+    const bodycamId = pathname.split('/')[3];
+    const db = getBotDb();
+    const bcSession = db && db.prepare('SELECT * FROM bodycam_sessions WHERE id = ?').get(bodycamId);
+    if (!bcSession) return sendJSON(res, 404, { error: 'Not found' });
+    const body = await parseBody(req);
+    if (body.action === 'flag') {
+      db.prepare("UPDATE bodycam_sessions SET review_status = 'flagged' WHERE id = ?").run(bodycamId);
+    } else if (body.action === 'mark-reviewed') {
+      db.prepare("UPDATE bodycam_sessions SET review_status = 'reviewed', reviewed_by = ?, reviewed_at = ? WHERE id = ?")
+        .run(currentSession.displayName || currentSession.username, Date.now(), bodycamId);
+    } else {
+      return sendJSON(res, 400, { error: "action must be 'flag' or 'mark-reviewed'." });
+    }
+    return sendJSON(res, 200, { success: true });
+  }
+
+  // API: GET /api/admin/bodycam/search (Supervisor+ - cross-officer shift
+  // log search by date/tag/officer, optional filters combine with AND)
+  if (pathname === '/api/admin/bodycam/search' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isSupervisor) {
+      return sendJSON(res, 403, { error: 'Access Denied: Supervisor rank required.' });
+    }
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+    const { date, tag, userId } = parsedUrl.query;
+    const clauses = [];
+    const params = [];
+    if (date) { clauses.push("date(b.started_at / 1000, 'unixepoch') = ?"); params.push(date); }
+    if (tag) { clauses.push('b.tags LIKE ?'); params.push('%' + tag + '%'); }
+    if (userId) { clauses.push('b.user_id = ?'); params.push(userId); }
+    const where = clauses.length ? 'WHERE ' + clauses.join(' AND ') : '';
+    const rows = db.prepare(`
+      SELECT b.*, COALESCE(s.roblox_username, b.user_id) AS roblox_username
+      FROM bodycam_sessions b
+      LEFT JOIN staff_members s ON s.user_id = b.user_id
+      ${where}
+      ORDER BY b.started_at DESC
+      LIMIT 200
+    `).all(...params);
+    return sendJSON(res, 200, {
+      results: rows.map(r => ({
+        id: r.id,
+        userId: r.user_id,
+        robloxUsername: r.roblox_username,
+        startedAt: r.started_at,
+        status: r.status,
+        durationFormatted: formatDuration(r.duration_seconds || 0),
+        reviewStatus: r.review_status || 'unreviewed',
+        tags: r.tags ? JSON.parse(r.tags) : [],
+        discordLink: r.discord_channel_id ? `https://discord.com/channels/${VIDEO_LOG_GUILD_ID}/${r.discord_channel_id}` : null
+      }))
+    });
+  }
+
+  // API: POST /api/admin/bodycam/audit-randomizer/run (Supervisor+ - picks
+  // AUDIT_RANDOMIZER_COUNT random 'ready' recordings not already selected
+  // this week and flags them for mandatory review, same runs weekly on
+  // a schedule via runBodycamAuditRandomizer() below)
+  if (pathname === '/api/admin/bodycam/audit-randomizer/run' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isSupervisor) {
+      return sendJSON(res, 403, { error: 'Access Denied: Supervisor rank required.' });
+    }
+    const selected = runBodycamAuditRandomizer();
+    return sendJSON(res, 200, { success: true, selected });
+  }
+
+  // API: GET /api/admin/bodycam/audit-randomizer/history (Supervisor+)
+  if (pathname === '/api/admin/bodycam/audit-randomizer/history' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isSupervisor) {
+      return sendJSON(res, 403, { error: 'Access Denied: Supervisor rank required.' });
+    }
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+    const rows = db.prepare(`
+      SELECT b.*, COALESCE(s.roblox_username, b.user_id) AS roblox_username
+      FROM bodycam_sessions b
+      LEFT JOIN staff_members s ON s.user_id = b.user_id
+      WHERE b.audit_selected_at IS NOT NULL
+      ORDER BY b.audit_selected_at DESC
+      LIMIT 50
+    `).all();
+    return sendJSON(res, 200, {
+      history: rows.map(r => ({
+        id: r.id,
+        robloxUsername: r.roblox_username,
+        auditSelectedAt: r.audit_selected_at,
+        reviewStatus: r.review_status || 'unreviewed'
+      }))
+    });
+  }
+
   // API: GET /api/officer/:userId/shifts (Supervisor+ or self - shift history + bodycam refs)
   if (pathname.startsWith('/api/officer/') && pathname.endsWith('/shifts') && req.method === 'GET') {
     if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
@@ -2903,7 +3104,11 @@ const server = http.createServer(async (req, res) => {
         durationSeconds: s.duration_seconds,
         durationFormatted: formatDuration(s.duration_seconds),
         weekKey: s.week_key,
-        bodycam: s.bodycam_id ? { id: s.bodycam_id, status: bodycamMap[s.bodycam_id]?.status || 'expired' } : null
+        bodycam: s.bodycam_id ? {
+          id: s.bodycam_id,
+          status: bodycamMap[s.bodycam_id]?.status || 'expired',
+          tags: bodycamMap[s.bodycam_id]?.tags ? JSON.parse(bodycamMap[s.bodycam_id].tags) : []
+        } : null
       }))
     });
   }
