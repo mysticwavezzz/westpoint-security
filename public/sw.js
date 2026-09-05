@@ -3,7 +3,6 @@ const CACHE_NAME = 'westpoint-v1';
 const PRECACHE_URLS = [
   '/',
   '/css/style.css',
-  '/js/theme.js',
   '/assets/logo.png',
   '/manifest.json'
 ];

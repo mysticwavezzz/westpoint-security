@@ -847,32 +847,3 @@ a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
   color: #6C7A89;
   font-style: italic;
 }
-
-/* ===================================================
-   DARK THEME OVERRIDES
-   =================================================== */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg-page: #14171A;
-    --bg-surface: #1E252D;
-    --bg-surface-alt: #12161A;
-    --text-primary: #E2E6EA;
-    --text-secondary: #A0AEB8;
-    --border-default: #35434F;
-    --border-strong: #485A6A;
-    --nav-bg-start: #242E37;
-    --nav-bg-end: #1E252D;
-  }
-}
-
-:root[data-theme="dark"] {
-  --bg-page: #14171A;
-  --bg-surface: #1E252D;
-  --bg-surface-alt: #12161A;
-  --text-primary: #E2E6EA;
-  --text-secondary: #A0AEB8;
-  --border-default: #35434F;
-  --border-strong: #485A6A;
-  --nav-bg-start: #242E37;
-  --nav-bg-end: #1E252D;
-}
