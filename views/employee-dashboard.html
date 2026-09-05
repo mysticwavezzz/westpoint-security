@@ -277,6 +277,66 @@
               </div>
             </div>
           </section>
+
+          <!-- Supervisor Bodycam Review Queue & Cross-Officer Search -->
+          <div id="supervisorBodycamPanel" style="display: none; margin-top: 14px;">
+            <section class="content-box" style="margin-bottom: 14px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                <h2>Supervisor Bodycam Review Queue</h2>
+                <div style="display: flex; gap: 6px; align-items: center;">
+                  <button type="button" class="period-button period-button-secondary" style="font-size: 9.5px; padding: 3px 8px;" onclick="loadBodycamReviewQueue('unreviewed')">[ UNREVIEWED ]</button>
+                  <button type="button" class="period-button period-button-secondary" style="font-size: 9.5px; padding: 3px 8px;" onclick="loadBodycamReviewQueue('flagged')">[ FLAGGED ]</button>
+                  <button type="button" class="period-button period-button-secondary" style="font-size: 9.5px; padding: 3px 8px;" onclick="loadBodycamReviewQueue('all')">[ ALL ]</button>
+                </div>
+              </div>
+              <div class="content-box-body" style="padding: 0;">
+                <div class="period-table-wrap" style="margin-bottom: 0; border: none; max-height: 240px; overflow-y: auto;">
+                  <table class="period-table" style="font-size: 11px;">
+                    <thead>
+                      <tr>
+                        <th>Officer</th>
+                        <th>Date / Duration</th>
+                        <th>Tags</th>
+                        <th>Review Status</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody id="bodycamReviewTableBody">
+                      <tr><td colspan="5" class="table-empty-msg">Select filter to view review queue...</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="content-box">
+              <h2>Cross-Officer Shift &amp; Bodycam Search</h2>
+              <div class="content-box-body">
+                <div style="display: grid; grid-template-columns: 2fr 1fr auto; gap: 8px; margin-bottom: 10px;">
+                  <input type="text" id="bcSearchQuery" placeholder="Search officer, tags (e.g. pursuit, use_of_force), or notes..." style="width: 100%; box-sizing: border-box;" />
+                  <input type="text" id="bcSearchWeek" placeholder="Week Key (e.g. 2026-W36)" style="width: 100%; box-sizing: border-box;" />
+                  <button type="button" class="period-button" onclick="searchShiftsCrossOfficer()">[ SEARCH SHIFTS ]</button>
+                </div>
+                <div class="period-table-wrap" style="border: none; max-height: 200px; overflow-y: auto;">
+                  <table class="period-table" style="font-size: 11px;">
+                    <thead>
+                      <tr>
+                        <th>Officer</th>
+                        <th>Start / Duration</th>
+                        <th>Week</th>
+                        <th>Tags</th>
+                        <th>Review</th>
+                        <th>Recording</th>
+                      </tr>
+                    </thead>
+                    <tbody id="bcSearchResultsTableBody">
+                      <tr><td colspan="6" class="table-empty-msg">Enter query parameters to search across all officer logs.</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+          </div>
         </section>
 
         <!-- ==============================================
@@ -1191,6 +1251,13 @@
         } else if (perms.isSupervisor) {
           badgeRole.className = 'tier-badge tier-badge-supervisor';
           document.getElementById('officerClearanceText').innerText = 'Supervisor Operational Clearances';
+        }
+        if (perms.isSupervisor || perms.isCommand || perms.isInternalAffairs) {
+          const supPanel = document.getElementById('supervisorBodycamPanel');
+          if (supPanel) {
+            supPanel.style.display = 'block';
+            loadBodycamReviewQueue('unreviewed');
+          }
         } else {
           badgeRole.className = 'tier-badge tier-badge-officer';
           document.getElementById('officerClearanceText').innerText = 'Standard Guard Clearance';
@@ -1887,12 +1954,32 @@
               bcButton = '<span style="font-size: 10px; color: #90A4AE;">Recording…</span>';
             }
           }
+          let tagsHtml = '';
+          let revBadge = '';
+          if (s.bodycam) {
+            const tags = s.bodycam.tags || [];
+            const tagsPills = tags.map(t => `<span class="status-pill" style="font-size: 8px; background: #ECEFF1; color: #37474F; margin-right: 3px;">#${escapeHtml(t)}</span>`).join('');
+            tagsHtml = `
+              <div style="margin-top: 4px; display: flex; align-items: center; flex-wrap: wrap; gap: 3px;">
+                ${tagsPills}
+                <button type="button" class="period-button period-button-secondary" style="font-size: 8px; padding: 1px 4px;" onclick="promptAddTag('${escapeHtml(s.bodycam.id)}', '${escapeHtml(tags.join(','))}')">[ + TAG ]</button>
+              </div>
+            `;
+            if (s.bodycam.reviewStatus === 'approved') {
+              revBadge = '<span class="status-pill status-pill-green" style="font-size: 8px; margin-left: 4px;">✓ APPROVED</span>';
+            } else if (s.bodycam.reviewStatus === 'flagged') {
+              revBadge = '<span class="status-pill status-pill-red" style="font-size: 8px; margin-left: 4px;">⚠ FLAGGED</span>';
+            } else if (s.bodycam.reviewStatus === 'reviewed') {
+              revBadge = '<span class="status-pill status-pill-yellow" style="font-size: 8px; margin-left: 4px;">REVIEWED</span>';
+            }
+          }
           return `
             <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #ECEFF1; font-size: 11.5px;">
               <div>
                 <strong>${new Date(s.startTime).toLocaleDateString()}</strong>
                 <span style="color: #546675;"> ${new Date(s.startTime).toLocaleTimeString()} → ${new Date(s.endTime).toLocaleTimeString()}</span>
-                <div style="font-family: monospace; font-size: 10.5px; color: #2D3942;">${escapeHtml(s.durationFormatted)} · Week ${escapeHtml(s.weekKey)}</div>
+                <div style="font-family: monospace; font-size: 10.5px; color: #2D3942;">${escapeHtml(s.durationFormatted)} · Week ${escapeHtml(s.weekKey)} ${revBadge}</div>
+                ${tagsHtml}
               </div>
               <div>${bcButton}</div>
             </div>
@@ -2930,6 +3017,32 @@
         </div>
         <div id="flagModalStatusMsg" style="margin-top: 8px; font-size: 11px; font-weight: 700;"></div>
       </div>
+    </div>
+  </div>
+
+
+  <!-- Bodycam Review Modal -->
+  <div id="bodycamReviewModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 9999; align-items: center; justify-content: center; padding: 20px;">
+    <div style="background: var(--bg-surface, #FFFFFF); border: 2px solid #9E2A2B; max-width: 500px; width: 100%; padding: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">
+      <h3 style="margin-top: 0; border-bottom: 1px solid #CFD8DC; padding-bottom: 8px;">Supervisor Bodycam Review — <span id="bcReviewModalOfficer"></span></h3>
+      <input type="hidden" id="bcReviewModalId" />
+      <div style="margin-bottom: 10px;">
+        <label style="font-size: 11px; display: block; margin-bottom: 6px;">Review Determination:
+          <select id="bcReviewStatusSelect" style="width: 100%;">
+            <option value="approved">Approved — Standard Patrol Adherence</option>
+            <option value="flagged">Flagged — Forward to IA / Command Review</option>
+            <option value="reviewed">Reviewed — Minor Feedback Noted</option>
+          </select>
+        </label>
+        <label style="font-size: 11px; display: block; margin-bottom: 10px;">Review Findings &amp; Observations:
+          <textarea id="bcReviewNotesText" style="width: 100%; height: 80px; box-sizing: border-box; margin-top: 4px;" placeholder="Document protocol adherence, use of force assessment, or driving standards..."></textarea>
+        </label>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 8px;">
+        <button type="button" class="period-button period-button-secondary" onclick="closeBodycamReviewModal()">[ CANCEL ]</button>
+        <button type="button" class="period-button" onclick="submitBodycamReview()">[ SUBMIT REVIEW ]</button>
+      </div>
+      <div id="bcReviewModalMsg" style="margin-top: 8px; font-size: 11px; font-weight: 700;"></div>
     </div>
   </div>
 

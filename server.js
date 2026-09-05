@@ -1397,6 +1397,193 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
+  // API: POST /api/bodycam/:id/tags (Tagging Clips)
+  if (pathname.startsWith('/api/bodycam/') && pathname.endsWith('/tags') && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isOfficer) {
+      return sendJSON(res, 401, { error: 'Unauthorized: Officer session required' });
+    }
+    const bodycamId = pathname.slice('/api/bodycam/'.length, -'/tags'.length);
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+
+    const bc = db.prepare('SELECT * FROM bodycam_sessions WHERE id = ?').get(bodycamId);
+    if (!bc) return sendJSON(res, 404, { error: 'Bodycam session not found' });
+
+    if (bc.user_id !== currentSession.id && !currentSession.permissions.isSupervisor) {
+      return sendJSON(res, 403, { error: 'Access Denied: You can only tag your own bodycam recordings.' });
+    }
+
+    const body = await parseBody(req);
+    let tags = [];
+    if (Array.isArray(body.tags)) {
+      tags = body.tags.map(t => String(t).trim().toLowerCase().slice(0, 30)).filter(Boolean);
+    } else if (typeof body.tags === 'string') {
+      tags = body.tags.split(',').map(t => t.trim().toLowerCase().slice(0, 30)).filter(Boolean);
+    }
+
+    const tagsJson = JSON.stringify(tags);
+    db.prepare('UPDATE bodycam_sessions SET tags = ? WHERE id = ?').run(tagsJson, bodycamId);
+
+    return sendJSON(res, 200, { success: true, bodycamId, tags });
+  }
+
+  // API: GET /api/admin/bodycam/review-queue (Supervisor Review Queue)
+  if (pathname === '/api/admin/bodycam/review-queue' && req.method === 'GET') {
+    if (!currentSession || (!currentSession.permissions.isSupervisor && !currentSession.permissions.isInternalAffairs)) {
+      return sendJSON(res, 403, { error: 'Access Denied: Supervisor or IA rank required.' });
+    }
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+
+    const statusFilter = parsedUrl.query.status || 'all';
+    let query = `
+      SELECT bs.id, bs.user_id, bs.week_key, bs.status, bs.started_at, bs.finished_at,
+             bs.duration_seconds, bs.tags, bs.review_status, bs.review_notes, bs.reviewed_by, bs.reviewed_at,
+             COALESCE(s.roblox_username, sh.roblox_username, 'Officer') as roblox_username
+      FROM bodycam_sessions bs
+      LEFT JOIN shift_history sh ON sh.bodycam_id = bs.id
+      LEFT JOIN staff_members s ON s.user_id = bs.user_id
+    `;
+
+    const params = [];
+    if (statusFilter && statusFilter !== 'all') {
+      query += ' WHERE bs.review_status = ?';
+      params.push(statusFilter);
+    }
+    query += ' ORDER BY bs.started_at DESC LIMIT 50';
+
+    const rows = db.prepare(query).all(...params);
+    const queue = rows.map(r => {
+      let tags = [];
+      try { tags = JSON.parse(r.tags || '[]'); } catch (e) {}
+      return {
+        id: r.id,
+        userId: r.user_id,
+        robloxUsername: r.roblox_username,
+        startedAt: r.started_at,
+        durationSeconds: r.duration_seconds,
+        durationFormatted: formatDuration(r.duration_seconds || 0),
+        status: r.status,
+        tags,
+        reviewStatus: r.review_status || 'unreviewed',
+        reviewNotes: r.review_notes || '',
+        reviewedBy: r.reviewed_by,
+        reviewedAt: r.reviewed_at
+      };
+    });
+
+    return sendJSON(res, 200, { queue });
+  }
+
+  // API: POST /api/bodycam/:id/review (Supervisor / IA Review Submission)
+  if (pathname.startsWith('/api/bodycam/') && pathname.endsWith('/review') && req.method === 'POST') {
+    if (!currentSession || (!currentSession.permissions.isSupervisor && !currentSession.permissions.isInternalAffairs)) {
+      return sendJSON(res, 403, { error: 'Access Denied: Supervisor or IA rank required.' });
+    }
+    const bodycamId = pathname.slice('/api/bodycam/'.length, -'/review'.length);
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+
+    const bc = db.prepare('SELECT * FROM bodycam_sessions WHERE id = ?').get(bodycamId);
+    if (!bc) return sendJSON(res, 404, { error: 'Bodycam session not found' });
+
+    const body = await parseBody(req);
+    const status = ['approved', 'flagged', 'reviewed'].includes(body.status) ? body.status : 'reviewed';
+    const notes = String(body.notes || '').trim().slice(0, 1000);
+    const now = Date.now();
+
+    db.prepare(`
+      UPDATE bodycam_sessions
+      SET review_status = ?, review_notes = ?, reviewed_by = ?, reviewed_at = ?
+      WHERE id = ?
+    `).run(status, notes, currentSession.displayName, now, bodycamId);
+
+    const revId = 'REV-' + crypto.randomBytes(8).toString('hex');
+    db.prepare(`
+      INSERT INTO bodycam_reviews (id, session_id, reviewer_id, reviewer_name, status, notes, reviewed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(revId, bodycamId, currentSession.id, currentSession.displayName, status, notes, now);
+
+    // Discord Alert if flagged
+    if (status === 'flagged' && DISCORD_BOT_TOKEN) {
+      const embed = {
+        title: 'Bodycam Shift Flagged for Investigation',
+        color: 0xE74C3C,
+        description: `**Bodycam ID:** \`${bodycamId}\`\n**Officer:** <@${bc.user_id}>\n**Flagged By:** ${currentSession.displayName} (<@${currentSession.id}>)\n\n**Review Notes:**\n> ${notes || 'Requires administrative or IA review.'}`,
+        footer: { text: 'Westpoint Video Review Queue' },
+        timestamp: new Date().toISOString()
+      };
+      postDiscordMessage(AUDIT_LOGS_CHANNEL_ID, embed).catch(() => {});
+    }
+
+    return sendJSON(res, 200, { success: true, bodycamId, status });
+  }
+
+  // API: GET /api/admin/bodycam/search (Cross-officer shift & bodycam search)
+  if (pathname === '/api/admin/bodycam/search' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isSupervisor) {
+      return sendJSON(res, 403, { error: 'Access Denied: Supervisor or Command rank required.' });
+    }
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+
+    const q = String(parsedUrl.query.q || '').trim().toLowerCase();
+    const tag = String(parsedUrl.query.tag || '').trim().toLowerCase();
+    const officer = String(parsedUrl.query.officer || '').trim().toLowerCase();
+    const week = String(parsedUrl.query.week || '').trim();
+
+    let sql = `
+      SELECT sh.id, sh.user_id, sh.roblox_username, sh.start_time, sh.end_time,
+             sh.duration_seconds, sh.week_key, sh.bodycam_id,
+             bs.tags, bs.review_status, bs.review_notes
+      FROM shift_history sh
+      LEFT JOIN bodycam_sessions bs ON bs.id = sh.bodycam_id
+      WHERE 1=1
+    `;
+    const params = [];
+
+    if (week) {
+      sql += ' AND sh.week_key = ?';
+      params.push(week);
+    }
+    if (officer) {
+      sql += ' AND (LOWER(sh.roblox_username) LIKE ? OR sh.user_id = ?)';
+      params.push(`%${officer}%`, officer);
+    }
+    if (tag) {
+      sql += ' AND LOWER(bs.tags) LIKE ?';
+      params.push(`%${tag}%`);
+    }
+    if (q) {
+      sql += ' AND (LOWER(sh.roblox_username) LIKE ? OR LOWER(bs.tags) LIKE ? OR LOWER(bs.review_notes) LIKE ?)';
+      params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+    }
+
+    sql += ' ORDER BY sh.start_time DESC LIMIT 50';
+    const rows = db.prepare(sql).all(...params);
+
+    const results = rows.map(r => {
+      let tags = [];
+      try { tags = JSON.parse(r.tags || '[]'); } catch (e) {}
+      return {
+        id: r.id,
+        userId: r.user_id,
+        robloxUsername: r.roblox_username || 'Officer',
+        startTime: r.start_time,
+        endTime: r.end_time,
+        durationSeconds: r.duration_seconds,
+        durationFormatted: formatDuration(r.duration_seconds),
+        weekKey: r.week_key,
+        bodycamId: r.bodycam_id,
+        tags,
+        reviewStatus: r.review_status || 'unreviewed'
+      };
+    });
+
+    return sendJSON(res, 200, { results });
+  }
+
+
   // 5. API: GET /api/duty-roster (Real-time in-game autolog sessions & weekly stats from bot.db)
   if (pathname === '/api/duty-roster') {
     if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
@@ -3159,7 +3346,15 @@ const server = http.createServer(async (req, res) => {
         durationSeconds: s.duration_seconds,
         durationFormatted: formatDuration(s.duration_seconds),
         weekKey: s.week_key,
-        bodycam: s.bodycam_id ? { id: s.bodycam_id, status: bodycamMap[s.bodycam_id]?.status || 'expired' } : null
+        bodycam: s.bodycam_id ? {
+          id: s.bodycam_id,
+          status: bodycamMap[s.bodycam_id]?.status || 'expired',
+          tags: (() => {
+            try { return JSON.parse(bodycamMap[s.bodycam_id]?.tags || '[]'); } catch(e) { return []; }
+          })(),
+          reviewStatus: bodycamMap[s.bodycam_id]?.review_status || 'unreviewed',
+          reviewNotes: bodycamMap[s.bodycam_id]?.review_notes || ''
+        } : null
       }))
     });
   }

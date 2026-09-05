@@ -239,4 +239,25 @@ test('GET /api/admin/flags/stale-ia rejects unauthenticated requests', async () 
   assert.strictEqual(res.status, 403);
 });
 
+test('POST /api/bodycam/:id/tags rejects unauthenticated requests', async () => {
+  const res = await post('/api/bodycam/BC-12345/tags', { tags: ['traffic_stop'] });
+  assert.strictEqual(res.status, 401);
+});
+
+test('GET /api/admin/bodycam/review-queue rejects unauthenticated requests', async () => {
+  const res = await get('/api/admin/bodycam/review-queue');
+  assert.strictEqual(res.status, 403);
+});
+
+test('POST /api/bodycam/:id/review rejects unauthenticated requests', async () => {
+  const res = await post('/api/bodycam/BC-12345/review', { status: 'approved', notes: 'OK' });
+  assert.strictEqual(res.status, 403);
+});
+
+test('GET /api/admin/bodycam/search rejects unauthenticated requests', async () => {
+  const res = await get('/api/admin/bodycam/search?q=test');
+  assert.strictEqual(res.status, 403);
+});
+
+
 
