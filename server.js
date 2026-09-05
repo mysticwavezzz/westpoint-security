@@ -1,3 +1,4 @@
+const logger = require('./lib/logger.js');
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
@@ -131,6 +132,43 @@ let VIDEO_LOG_PARENT_ID = process.env.VIDEO_LOG_PARENT_ID || '154553786467733110
 // Applied once at startup, right after loadEnv() below - overwrites the
 // `let` defaults above with anything Command has saved via the Admin
 // Channel Config panel.
+
+const ACTION_CONFIRMATION_CODES = new Map();
+
+async function backupDatabaseToR2() {
+  const db = getBotDb();
+  if (!db) return null;
+  const timestampStr = new Date().toISOString().replace(/[:.]/g, '-');
+  const tempBackupPath = path.join(DATA_DIR, `backup-${timestampStr}.db`);
+  try {
+    if (fs.existsSync(tempBackupPath)) fs.unlinkSync(tempBackupPath);
+    db.prepare(`VACUUM INTO '${tempBackupPath.replace(/\\/g, '/')}'`).run();
+
+    const backupBytes = fs.statSync(tempBackupPath).size;
+    const r2Key = `backups/bot-backup-${timestampStr}.db`;
+
+    if (r2.isConfigured()) {
+      const fileBuffer = fs.readFileSync(tempBackupPath);
+      await r2.putObject(r2Key, fileBuffer, 'application/x-sqlite3');
+      logger.info('Automated database snapshot uploaded to R2', { r2Key, bytes: backupBytes });
+      try { fs.unlinkSync(tempBackupPath); } catch (e) {}
+      return { success: true, backupKey: r2Key, bytes: backupBytes, timestamp: new Date().toISOString() };
+    } else {
+      logger.info('Database snapshot created locally (R2 not configured)', { path: tempBackupPath, bytes: backupBytes });
+      return { success: true, backupKey: tempBackupPath, bytes: backupBytes, timestamp: new Date().toISOString(), localOnly: true };
+    }
+  } catch (err) {
+    logger.error('Failed to snapshot database', {}, err);
+    try { if (fs.existsSync(tempBackupPath)) fs.unlinkSync(tempBackupPath); } catch (e) {}
+    throw err;
+  }
+}
+
+// Automated daily database backup
+setInterval(() => {
+  backupDatabaseToR2().catch(e => logger.error('Daily automated backup failed', {}, e));
+}, 24 * 60 * 60 * 1000);
+
 function loadChannelConfigOverrides() {
   const saved = readJSONFile('channel-config.json', null);
   if (!saved) return;
@@ -373,7 +411,9 @@ const ROUTE_VIEWS = {
   '/employee/dashboard': 'employee-dashboard.html',
   '/site-map': 'site-map.html',
   '/blotter': 'blotter.html',
-  '/transparency': 'transparency.html'
+  '/transparency': 'transparency.html',
+  '/employee/api-docs': 'api-docs.html',
+  '/api/docs': 'api-docs.html'
 };
 
 function serveViewFile(res, filename) {
@@ -2808,6 +2848,51 @@ const server = http.createServer(async (req, res) => {
     return sendJSON(res, 200, { success: true });
   }
 
+
+  // API: POST /api/admin/action-code/request (Command Only - Two-Factor Confirmation Code)
+  if (pathname === '/api/admin/action-code/request' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    const body = await parseBody(req);
+    const action = String(body.action || 'destructive-action').trim();
+    const code = 'WP-' + crypto.randomInt(100000, 999999);
+    const expiresAt = Date.now() + 5 * 60 * 1000;
+
+    ACTION_CONFIRMATION_CODES.set(currentSession.id, { code, action, expiresAt });
+
+    if (DISCORD_BOT_TOKEN) {
+      const embed = {
+        title: 'Action Confirmation Code Required',
+        color: 0xE67E22,
+        description: `**Command Officer:** ${currentSession.displayName} (<@${currentSession.id}>)\n**Requested Action:** \`${action}\`\n\n**Confirmation Code:**\n# \`${code}\`\n\n*Valid for 5 minutes. Enter this code on the portal to confirm.*\n`,
+        footer: { text: 'Westpoint Security 2FA Verification' },
+        timestamp: new Date().toISOString()
+      };
+      postDiscordMessage(AUDIT_LOGS_CHANNEL_ID, embed).catch(() => {});
+    }
+
+    return sendJSON(res, 200, {
+      success: true,
+      message: 'Confirmation code dispatched to administrative channel.',
+      expiresAt,
+      testCode: (!DISCORD_BOT_TOKEN || process.env.NODE_ENV === 'test') ? code : undefined
+    });
+  }
+
+  // API: POST /api/admin/backup-now (Command Only - Trigger immediate DB backup)
+  if (pathname === '/api/admin/backup-now' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    try {
+      const result = await backupDatabaseToR2();
+      return sendJSON(res, 200, result);
+    } catch (err) {
+      return sendJSON(res, 500, { error: 'Backup failed: ' + err.message });
+    }
+  }
+
   // API: POST /api/admin/reset-quota-logs (Command Only - wipe weekly quota
   // totals and shift history for a clean slate. Does not touch active
   // sessions, the staff roster, or bodycam video logs on Discord - those
@@ -2816,18 +2901,29 @@ const server = http.createServer(async (req, res) => {
     if (!currentSession || !currentSession.permissions.isCommand) {
       return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
     }
+    const body = await parseBody(req);
+    const confirmationCode = String(body.confirmationCode || '').trim();
+    const activeCode = ACTION_CONFIRMATION_CODES.get(currentSession.id);
+    if (!activeCode || activeCode.action !== 'reset-quota-logs' || activeCode.expiresAt < Date.now() || activeCode.code !== confirmationCode) {
+      return sendJSON(res, 400, {
+        error: 'Confirmation code required: Request a verification code first and provide it in confirmationCode.'
+      });
+    }
+    ACTION_CONFIRMATION_CODES.delete(currentSession.id);
+
     const db = getBotDb();
     if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
     try {
       const totals = db.prepare('DELETE FROM weekly_totals').run();
       const shifts = db.prepare('DELETE FROM shift_history').run();
+      logger.warn('Weekly quota logs and shift history reset by Command', { by: currentSession.displayName });
       return sendJSON(res, 200, {
         success: true,
         weeklyTotalsDeleted: totals.changes,
         shiftHistoryDeleted: shifts.changes
       });
     } catch (e) {
-      console.error('[QUOTA RESET ERROR]', e.message);
+      logger.error('Quota reset failed', {}, e);
       return sendJSON(res, 500, { error: 'Failed to reset quota logs' });
     }
   }

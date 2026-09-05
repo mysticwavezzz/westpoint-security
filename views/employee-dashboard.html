@@ -48,6 +48,7 @@
       <a href="/newsroom">NEWSROOM</a>
       <a href="/contact">CONTACT &amp; REPORTS</a>
       <a href="/employee" class="is-active">OFFICER WORKBENCH</a>
+      <a href="/employee/api-docs">API DOCS</a>
       <a href="/employee" onclick="handleSignOut(event)">SIGN OUT</a>
     </nav>
 
@@ -829,14 +830,17 @@
             </div>
           </section>
 
-          <!-- Quota Data Reset -->
+          <!-- Quota Data Reset & Backups -->
           <section class="content-box" style="margin-bottom: 14px; border-color: #E57373;">
-            <h2>Reset Weekly Quota Data</h2>
+            <h2>Maintenance, 2FA Protection &amp; Database Backups</h2>
             <div class="content-box-body">
               <p style="margin-bottom: 12px; font-size: 11.5px; color: #546675;">
-                Permanently clears all weekly quota totals and shift history for a clean slate. Does not affect active duty sessions, the staff roster, or bodycam recordings already saved (those still expire on their normal weekly schedule).
+                Resetting logs requires two-factor verification dispatched to the administrative Discord channel. Database snapshots use non-blocking SQLite snapshots uploaded directly to Cloudflare R2.
               </p>
-              <button type="button" class="period-button period-button-secondary" style="border-color: #9E2A2B; color: #9E2A2B;" onclick="resetQuotaLogs()">[ RESET ALL QUOTA LOGS ]</button>
+              <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+                <button type="button" class="period-button" onclick="triggerImmediateBackup()">[ 💾 SNAPSHOT DB TO R2 ]</button>
+                <button type="button" class="period-button period-button-secondary" style="border-color: #9E2A2B; color: #9E2A2B;" onclick="resetQuotaLogs()">[ RESET ALL QUOTA LOGS ]</button>
+              </div>
               <div id="quotaResetStatus" style="margin-top: 8px; font-weight: bold; font-size: 11px;"></div>
             </div>
           </section>
@@ -2431,11 +2435,36 @@
 
     async function resetQuotaLogs() {
       const statusDiv = document.getElementById('quotaResetStatus');
-      if (!confirm('This permanently deletes ALL weekly quota totals and shift history for every officer. This cannot be undone. Continue?')) return;
+      if (!confirm('This permanently deletes ALL weekly quota totals and shift history for every officer. A confirmation code will be dispatched to the Discord audit channel. Continue?')) return;
+      
       statusDiv.style.color = '#546675';
-      statusDiv.innerText = 'Resetting...';
+      statusDiv.innerText = 'Requesting confirmation code...';
       try {
-        const res = await fetch('/api/admin/reset-quota-logs', { method: 'POST' });
+        const reqRes = await fetch('/api/admin/action-code/request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'reset-quota-logs' })
+        });
+        const reqData = await reqRes.json();
+        if (!reqRes.ok || !reqData.success) {
+          statusDiv.style.color = '#9E2A2B';
+          statusDiv.innerText = 'Failed to request code: ' + (reqData.error || 'Server error');
+          return;
+        }
+
+        const code = prompt(reqData.message + '\nEnter the 6-digit confirmation code (e.g. WP-123456):');
+        if (!code) {
+          statusDiv.style.color = '#546675';
+          statusDiv.innerText = 'Reset cancelled.';
+          return;
+        }
+
+        statusDiv.innerText = 'Verifying code and resetting...';
+        const res = await fetch('/api/admin/reset-quota-logs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirmationCode: code.trim() })
+        });
         const data = await res.json();
         if (res.ok && data.success) {
           statusDiv.style.color = 'green';
@@ -2448,6 +2477,26 @@
       } catch (e) {
         statusDiv.style.color = '#9E2A2B';
         statusDiv.innerText = 'Network error resetting quota logs.';
+      }
+    }
+
+    async function triggerImmediateBackup() {
+      const statusDiv = document.getElementById('quotaResetStatus');
+      statusDiv.style.color = '#546675';
+      statusDiv.innerText = 'Generating database snapshot and uploading to R2...';
+      try {
+        const res = await fetch('/api/admin/backup-now', { method: 'POST' });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          statusDiv.style.color = 'green';
+          statusDiv.innerText = `Backup successful! Snapshot key: ${data.backupKey} (${Math.round(data.bytes / 1024)} KB)`;
+        } else {
+          statusDiv.style.color = '#9E2A2B';
+          statusDiv.innerText = 'Backup failed: ' + (data.error || 'Server error');
+        }
+      } catch (e) {
+        statusDiv.style.color = '#9E2A2B';
+        statusDiv.innerText = 'Network error running backup.';
       }
     }
 

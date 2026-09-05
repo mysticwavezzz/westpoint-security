@@ -259,5 +259,38 @@ test('GET /api/admin/bodycam/search rejects unauthenticated requests', async () 
   assert.strictEqual(res.status, 403);
 });
 
+test('GET /employee/api-docs serves API documentation page', async () => {
+  const res = await get('/employee/api-docs');
+  assert.strictEqual(res.status, 200);
+});
+
+test('GET /api/docs serves API documentation page', async () => {
+  const res = await get('/api/docs');
+  assert.strictEqual(res.status, 200);
+});
+
+test('GET /manifest.json serves PWA web manifest', async () => {
+  const res = await get('/manifest.json');
+  assert.strictEqual(res.status, 200);
+  const body = JSON.parse(res.body);
+  assert.strictEqual(body.name, 'Westpoint Security Portal');
+});
+
+test('POST /api/admin/action-code/request rejects unauthenticated requests', async () => {
+  const res = await post('/api/admin/action-code/request', { action: 'test' });
+  assert.strictEqual(res.status, 403);
+});
+
+test('POST /api/admin/backup-now rejects unauthenticated requests', async () => {
+  const res = await post('/api/admin/backup-now', {});
+  assert.strictEqual(res.status, 403);
+});
+
+test('POST /api/admin/reset-quota-logs rejects unauthenticated requests', async () => {
+  const res = await post('/api/admin/reset-quota-logs', {});
+  assert.strictEqual(res.status, 403);
+});
+
+
 
 
