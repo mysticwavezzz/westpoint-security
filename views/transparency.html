@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Public Incident Blotter | Westpoint Security</title>
+  <title>Transparency Report | Westpoint Security</title>
   <link rel="icon" href="/assets/favicon.png" />
   <link rel="stylesheet" href="/css/style.css" />
   <script src="/js/theme.js"></script>
@@ -54,33 +54,45 @@
 
     <main class="main-layout" id="main-content" tabindex="-1">
       <article class="main-content">
-        <h1>Public Incident Blotter</h1>
+        <h1>Public Transparency Report</h1>
         <p class="lead-copy">
-          A public log of recent patrol activity in Harrison County. Officer names, citizen names, and incident details are withheld here for privacy - full records are available to Command and Internal Affairs staff only.
+          Aggregate incident statistics for Harrison County. No officer names, citizen names, locations, or incident details are included here - see the <a href="/blotter">Public Incident Blotter</a> for individual (still redacted) entries.
         </p>
 
-        <section class="content-box">
-          <h2>Recent Entries</h2>
-          <div class="content-box-body">
-            <div class="period-table-wrap">
-              <table class="period-table">
-                <thead>
-                  <tr>
-                    <th>Case No.</th>
-                    <th>Date</th>
-                    <th>Location</th>
-                    <th>Action Type</th>
-                  </tr>
-                </thead>
-                <tbody id="blotterTableBody">
-                  <tr><td colspan="4" class="table-empty-msg">Loading blotter entries...</td></tr>
-                </tbody>
-              </table>
+        <div class="feature-grid">
+          <section class="content-box">
+            <h2>Incidents by Month</h2>
+            <div class="content-box-body" style="padding: 0;">
+              <div class="period-table-wrap" style="margin-bottom: 0; border: none;">
+                <table class="period-table">
+                  <thead><tr><th>Month</th><th>Count</th></tr></thead>
+                  <tbody id="byMonthTableBody">
+                    <tr><td colspan="2" class="table-empty-msg">Loading...</td></tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
+
+          <section class="content-box">
+            <h2>Incidents by Action Type</h2>
+            <div class="content-box-body" style="padding: 0;">
+              <div class="period-table-wrap" style="margin-bottom: 0; border: none;">
+                <table class="period-table">
+                  <thead><tr><th>Action Type</th><th>Count</th></tr></thead>
+                  <tbody id="byActionTableBody">
+                    <tr><td colspan="2" class="table-empty-msg">Loading...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <p id="totalIncidentsNote" style="font-size: 11px; color: #546675;"></p>
       </article>
     </main>
+
     <footer class="site-footer">
       <nav aria-label="Footer navigation">
         <a href="/">HOME</a> |
@@ -111,29 +123,24 @@
     function escapeHtml(str) {
       return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
-    async function loadBlotter() {
-      const tbody = document.getElementById('blotterTableBody');
+    async function loadTransparency() {
       try {
-        const res = await fetch('/api/public/blotter');
+        const res = await fetch('/api/public/transparency');
         const data = await res.json();
-        if (!data.blotter || data.blotter.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="4" class="table-empty-msg">No entries on file.</td></tr>';
-          return;
-        }
-        tbody.innerHTML = data.blotter.map(row => `
-          <tr>
-            <td style="font-family: monospace;">${escapeHtml(row.id)}</td>
-            <td>${escapeHtml(row.date)}</td>
-            <td>${escapeHtml(row.location)}</td>
-            <td>${escapeHtml(row.action)}</td>
-          </tr>
-        `).join('');
+        const byMonthBody = document.getElementById('byMonthTableBody');
+        const byActionBody = document.getElementById('byActionTableBody');
+        byMonthBody.innerHTML = (data.byMonth || []).length
+          ? data.byMonth.map(r => `<tr><td>${escapeHtml(r.month)}</td><td>${r.count}</td></tr>`).join('')
+          : '<tr><td colspan="2" class="table-empty-msg">No data on file.</td></tr>';
+        byActionBody.innerHTML = (data.byAction || []).length
+          ? data.byAction.map(r => `<tr><td>${escapeHtml(r.action)}</td><td>${r.count}</td></tr>`).join('')
+          : '<tr><td colspan="2" class="table-empty-msg">No data on file.</td></tr>';
+        document.getElementById('totalIncidentsNote').innerText = `Total incidents on file: ${data.totalIncidents || 0}`;
       } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="4" class="table-empty-msg">Unable to load the blotter right now.</td></tr>';
+        document.getElementById('byMonthTableBody').innerHTML = '<tr><td colspan="2" class="table-empty-msg">Error loading data.</td></tr>';
       }
     }
-    loadBlotter();
+    loadTransparency();
   </script>
 </body>
-
 </html>

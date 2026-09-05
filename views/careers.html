@@ -6,6 +6,7 @@
   <title>Careers | Westpoint Security</title>
   <link rel="icon" href="/assets/favicon.png" />
   <link rel="stylesheet" href="/css/style.css" />
+  <script src="/js/theme.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -54,36 +55,31 @@
     <main class="main-layout" id="main-content" tabindex="-1">
       <article class="main-content">
         <h1>Careers</h1>
+        <p class="lead-copy">
+          Open positions at Westpoint Security Harrison Branch. Sign in with Discord to apply to any position marked open.
+        </p>
 
-        <section class="content-box" style="max-width: 600px; margin: 24px auto;">
-          <h2>Recruitment Status</h2>
-          <div class="content-box-body" style="padding: 24px; text-align: center;">
-            <div style="margin-bottom: 14px;">
-              <span class="status-pill status-pill-red" style="font-size: 11px; padding: 4px 10px;">APPLICATIONS CLOSED</span>
-            </div>
-            <p style="font-size: 12px; color: #546675; line-height: 1.6; margin: 0 0 16px;">
-              Westpoint Security Harrison Branch is not actively recruiting or accepting employment applications at this time. Department rosters and security guard quotas are currently full.
-            </p>
-            <p style="font-size: 11px; color: #788A99; margin: 0;">
-              Please monitor our official <a href="/newsroom">Newsroom</a> for announcements regarding future recruitment cycles.
-            </p>
-          </div>
-        </section>
+        <div class="feature-grid" id="positionsList">
+          <section class="content-box">
+            <h2>Loading&hellip;</h2>
+            <div class="content-box-body"><p>Fetching current openings...</p></div>
+          </section>
+        </div>
       </article>
     </main>
 
     <footer class="site-footer">
       <nav aria-label="Footer navigation">
-        <a href="/">HOME</a> | 
-        <a href="/about">ABOUT WESTPOINT</a> | 
-        <a href="/services">SERVICES</a> | 
-        <a href="/service-area">SERVICE AREA</a> | 
-        <a href="/careers">CAREERS</a> | 
-        <a href="/newsroom">NEWSROOM</a> | 
-        <a href="/contact">CONTACT &amp; REPORTS</a> | 
-        <a href="/terms">TERMS OF SERVICE</a> | 
-        <a href="/privacy">PRIVACY POLICY</a> | 
-        <a href="/site-map">SITE MAP</a> | 
+        <a href="/">HOME</a> |
+        <a href="/about">ABOUT WESTPOINT</a> |
+        <a href="/services">SERVICES</a> |
+        <a href="/service-area">SERVICE AREA</a> |
+        <a href="/careers">CAREERS</a> |
+        <a href="/newsroom">NEWSROOM</a> |
+        <a href="/contact">CONTACT &amp; REPORTS</a> |
+        <a href="/terms">TERMS OF SERVICE</a> |
+        <a href="/privacy">PRIVACY POLICY</a> |
+        <a href="/site-map">SITE MAP</a> |
         <a href="/employee">EMPLOYEE ACCESS</a>
       </nav>
       <p>
@@ -97,5 +93,117 @@
       <p class="last-updated">Last Updated: September 4, 2026</p>
     </footer>
   </div>
+
+  <script>
+    let currentUser = null;
+    let openApplyPositionId = null;
+
+    function escapeHtml(str) {
+      return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    async function initAuth() {
+      try {
+        const res = await fetch('/api/auth/me');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.authenticated) currentUser = data;
+        }
+      } catch (e) {}
+    }
+
+    function toggleApplyForm(positionId) {
+      openApplyPositionId = openApplyPositionId === positionId ? null : positionId;
+      renderPositions(window.__positions || []);
+    }
+
+    async function submitApplication(positionId) {
+      const textarea = document.getElementById('coverLetter-' + positionId);
+      const statusEl = document.getElementById('applyStatus-' + positionId);
+      statusEl.style.color = '#546675';
+      statusEl.innerText = 'Submitting...';
+      try {
+        const res = await fetch('/api/careers/apply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ positionId, coverLetter: textarea.value })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          statusEl.style.color = '#9E2A2B';
+          statusEl.innerText = data.error || 'Failed to submit application.';
+          return;
+        }
+        statusEl.style.color = '#1B5E20';
+        statusEl.innerText = 'Application submitted - reference ' + data.record.id + '. Command will review it.';
+        textarea.disabled = true;
+      } catch (e) {
+        statusEl.style.color = '#9E2A2B';
+        statusEl.innerText = 'Network error submitting application.';
+      }
+    }
+
+    function renderPositions(positions) {
+      window.__positions = positions;
+      const container = document.getElementById('positionsList');
+      if (positions.length === 0) {
+        container.innerHTML = '<section class="content-box"><h2>No Positions Listed</h2><div class="content-box-body"><p>Check back later for openings.</p></div></section>';
+        return;
+      }
+      container.innerHTML = positions.map(p => {
+        const isOpen = p.status === 'open';
+        const isApplyOpen = openApplyPositionId === p.id;
+        let applySection = '';
+        if (isOpen) {
+          if (!currentUser) {
+            applySection = `<p class="more-link"><a href="/auth/discord?next=careers">[ SIGN IN WITH DISCORD TO APPLY ]</a></p>`;
+          } else if (isApplyOpen) {
+            applySection = `
+              <form class="period-form" style="margin-top: 10px;" onsubmit="event.preventDefault(); submitApplication('${p.id}')">
+                <fieldset>
+                  <legend>Apply to ${escapeHtml(p.title)}</legend>
+                  <label>Cover Letter / Why You'd Be a Good Fit:
+                    <textarea id="coverLetter-${p.id}" required placeholder="Tell us about your experience and availability..."></textarea>
+                  </label>
+                </fieldset>
+                <button type="submit" class="period-button">[ SUBMIT APPLICATION ]</button>
+                <div id="applyStatus-${p.id}" style="margin-top: 8px; font-weight: bold; font-size: 11px;"></div>
+              </form>
+            `;
+          } else {
+            applySection = `<p class="more-link"><a href="#" onclick="toggleApplyForm('${p.id}'); return false;">[ Apply to ${escapeHtml(p.title)} ]</a></p>`;
+          }
+        }
+        return `
+          <section class="content-box">
+            <h2>${escapeHtml(p.title)}</h2>
+            <div class="content-box-body">
+              <div style="margin-bottom: 8px;">
+                <span class="status-pill ${isOpen ? 'status-pill-green' : 'status-pill-red'}">${isOpen ? 'OPEN' : 'CLOSED'}</span>
+                <span style="font-size: 10.5px; color: #546675; margin-left: 6px;">${escapeHtml(p.department)}</span>
+              </div>
+              <p>${escapeHtml(p.description)}</p>
+              ${applySection}
+            </div>
+          </section>
+        `;
+      }).join('');
+    }
+
+    async function loadPositions() {
+      try {
+        const res = await fetch('/api/careers/positions');
+        const data = await res.json();
+        renderPositions(data.positions || []);
+      } catch (e) {
+        document.getElementById('positionsList').innerHTML = '<section class="content-box"><h2>Error</h2><div class="content-box-body"><p>Could not load positions right now.</p></div></section>';
+      }
+    }
+
+    (async () => {
+      await initAuth();
+      await loadPositions();
+    })();
+  </script>
 </body>
 </html>

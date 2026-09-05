@@ -6,6 +6,7 @@
   <title>Contact Us | Westpoint Security</title>
   <link rel="icon" href="/assets/favicon.png" />
   <link rel="stylesheet" href="/css/style.css" />
+  <script src="/js/theme.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -120,6 +121,7 @@
             <div class="dash-nav-bar" style="margin-bottom: 14px;">
               <button type="button" class="dash-tab-btn is-active" id="tabBtnGeneral" onclick="switchContactTab('general')">1. General Contact &amp; Staff Inquiries</button>
               <button type="button" class="dash-tab-btn" id="tabBtnMisconduct" onclick="switchContactTab('misconduct')">2. Report Misconduct / Commendations</button>
+              <button type="button" class="dash-tab-btn" id="tabBtnMyReports" onclick="switchContactTab('myreports')">3. My Reports</button>
             </div>
 
             <!-- TAB 1: General Contact Form -->
@@ -209,6 +211,29 @@
                 </form>
               </div>
             </section>
+
+            <!-- TAB 3: My Reports -->
+            <section class="content-box" id="tabMyReportsForm" style="display: none;">
+              <h2>My Filed Reports</h2>
+              <div class="content-box-body" style="padding: 0;">
+                <div class="period-table-wrap" style="margin-bottom: 0; border: none;">
+                  <table class="period-table">
+                    <thead>
+                      <tr>
+                        <th>Case No.</th>
+                        <th>Type</th>
+                        <th>Reported Officer</th>
+                        <th>Filed</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody id="myReportsTableBody">
+                      <tr><td colspan="5" class="table-empty-msg">Loading your reports...</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
           </div>
       </article>
 
@@ -257,21 +282,45 @@
         }
 
         function switchContactTab(mode) {
-          const btnGeneral = document.getElementById('tabBtnGeneral');
-          const btnMisconduct = document.getElementById('tabBtnMisconduct');
-          const secGeneral = document.getElementById('tabGeneralForm');
-          const secMisconduct = document.getElementById('tabMisconductForm');
+          const tabs = {
+            general: { btn: 'tabBtnGeneral', sec: 'tabGeneralForm' },
+            misconduct: { btn: 'tabBtnMisconduct', sec: 'tabMisconductForm' },
+            myreports: { btn: 'tabBtnMyReports', sec: 'tabMyReportsForm' }
+          };
+          Object.values(tabs).forEach(t => {
+            document.getElementById(t.btn).classList.remove('is-active');
+            document.getElementById(t.sec).style.display = 'none';
+          });
+          document.getElementById(tabs[mode].btn).classList.add('is-active');
+          document.getElementById(tabs[mode].sec).style.display = 'block';
+          if (mode === 'myreports') loadMyReports();
+        }
 
-          if (mode === 'misconduct') {
-            btnGeneral.classList.remove('is-active');
-            btnMisconduct.classList.add('is-active');
-            secGeneral.style.display = 'none';
-            secMisconduct.style.display = 'block';
-          } else {
-            btnMisconduct.classList.remove('is-active');
-            btnGeneral.classList.add('is-active');
-            secMisconduct.style.display = 'none';
-            secGeneral.style.display = 'block';
+        async function loadMyReports() {
+          const table = document.getElementById('myReportsTableBody');
+          table.innerHTML = '<tr><td colspan="5" class="table-empty-msg">Loading your reports...</td></tr>';
+          try {
+            const res = await fetch('/api/my-reports');
+            const data = await res.json();
+            if (!res.ok) {
+              table.innerHTML = '<tr><td colspan="5" class="table-empty-msg">' + escapeHtml(data.error || 'Failed to load your reports.') + '</td></tr>';
+              return;
+            }
+            if (!data.reports || data.reports.length === 0) {
+              table.innerHTML = '<tr><td colspan="5" class="table-empty-msg">You haven\'t filed any reports yet.</td></tr>';
+              return;
+            }
+            table.innerHTML = data.reports.map(r => `
+              <tr>
+                <td style="font-family: monospace; font-weight: bold;">${escapeHtml(r.id)}</td>
+                <td>${escapeHtml(r.type)}</td>
+                <td>${escapeHtml(r.officer)}</td>
+                <td style="font-size: 10.5px;">${new Date(r.timestamp).toLocaleDateString()}</td>
+                <td><span class="status-pill status-pill-blue">${escapeHtml(r.status || 'New')}</span></td>
+              </tr>
+            `).join('');
+          } catch (e) {
+            table.innerHTML = '<tr><td colspan="5" class="table-empty-msg">Network error loading your reports.</td></tr>';
           }
         }
 

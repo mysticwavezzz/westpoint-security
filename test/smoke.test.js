@@ -32,6 +32,23 @@ function get(pathname) {
   });
 }
 
+function post(pathname, body) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify(body || {});
+    const req = http.request(BASE_URL + pathname, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
+    }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode, body: data }));
+    });
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
 before(async () => {
   serverProcess = spawn(process.execPath, ['server.js'], {
     cwd: path.join(__dirname, '..'),
@@ -108,6 +125,41 @@ test('GET /api/report/:id/status 404s for an unknown case number', async () => {
 test('officer-only endpoints reject unauthenticated requests', async () => {
   const res = await get('/api/staff-directory');
   assert.strictEqual(res.status, 401);
+});
+
+test('GET /api/my-reports rejects unauthenticated requests', async () => {
+  const res = await get('/api/my-reports');
+  assert.strictEqual(res.status, 401);
+});
+
+test('GET /api/careers/positions returns a positions array', async () => {
+  const res = await get('/api/careers/positions');
+  assert.strictEqual(res.status, 200);
+  const body = JSON.parse(res.body);
+  assert.ok(Array.isArray(body.positions));
+  assert.ok(body.positions.length > 0);
+});
+
+test('POST /api/careers/apply rejects unauthenticated requests', async () => {
+  const res = await post('/api/careers/apply', { positionId: 'POS-1001' });
+  assert.strictEqual(res.status, 401);
+});
+
+test('GET /api/admin/careers/applications rejects unauthenticated requests', async () => {
+  const res = await get('/api/admin/careers/applications');
+  assert.strictEqual(res.status, 403);
+});
+
+test('GET /api/public/transparency returns aggregate-only, redacted shape', async () => {
+  const res = await get('/api/public/transparency');
+  assert.strictEqual(res.status, 200);
+  const body = JSON.parse(res.body);
+  assert.ok(Array.isArray(body.byMonth));
+  assert.ok(Array.isArray(body.byAction));
+  const json = res.body;
+  assert.ok(!json.includes('"officer"'));
+  assert.ok(!json.includes('"suspect"'));
+  assert.ok(!json.includes('"summary"'));
 });
 
 test('command-only endpoints reject unauthenticated requests', async () => {

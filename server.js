@@ -191,6 +191,16 @@ function persistSessions() {
 // only the seed values used the first time that file doesn't exist yet, so
 // a fresh deploy behaves exactly as it always did until Command edits
 // something - after that, this constant is never read again.
+// Seed positions.json the first time it's read (readJSONFile's default
+// value, not written to disk until Command actually edits something) -
+// listed and visibly closed rather than an empty list, matching the
+// original site-wide "APPLICATIONS CLOSED" notice this feature replaces.
+const DEFAULT_POSITIONS = [
+  { id: 'POS-1001', title: 'Security Officer', department: 'Field Operations', description: 'Entry-level patrol and response duties across Harrison County.', status: 'closed', createdAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'POS-1002', title: 'Dispatcher', department: 'Operations Center', description: 'Coordinate officer response and radio traffic from the operations desk.', status: 'closed', createdAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'POS-1003', title: 'Field Supervisor', department: 'Field Operations', description: 'Oversee patrol shifts and mentor junior officers.', status: 'closed', createdAt: '2026-01-01T00:00:00.000Z' }
+];
+
 const LEGACY_ROLE_SEED = {
   '1522793591112466493': { displayName: 'Security Chief', isCommand: true },
   '1522793595315294248': { displayName: 'Security Deputy Chief', isCommand: true },
@@ -317,7 +327,8 @@ const ROUTE_VIEWS = {
   '/employee': 'employee.html',
   '/employee/dashboard': 'employee-dashboard.html',
   '/site-map': 'site-map.html',
-  '/blotter': 'blotter.html'
+  '/blotter': 'blotter.html',
+  '/transparency': 'transparency.html'
 };
 
 function serveViewFile(res, filename) {
@@ -1352,6 +1363,27 @@ const server = http.createServer(async (req, res) => {
     return sendJSON(res, 200, { blotter: redacted });
   }
 
+  // API: GET /api/public/transparency (Public - aggregate-only incident
+  // stats, same redaction philosophy as the blotter above: only counts by
+  // month and by action category ever leave this endpoint, never an
+  // officer name, location, suspect, or summary.)
+  if (pathname === '/api/public/transparency' && req.method === 'GET') {
+    const allIncidents = readJSONFile('incidents.json', []);
+    const byMonth = {};
+    const byAction = {};
+    for (const inc of allIncidents) {
+      const month = (inc.timestamp || '').split('T')[0].slice(0, 7);
+      if (month) byMonth[month] = (byMonth[month] || 0) + 1;
+      const action = inc.action || 'Standard Patrol Action';
+      byAction[action] = (byAction[action] || 0) + 1;
+    }
+    return sendJSON(res, 200, {
+      byMonth: Object.entries(byMonth).map(([month, count]) => ({ month, count })).sort((a, b) => a.month.localeCompare(b.month)),
+      byAction: Object.entries(byAction).map(([action, count]) => ({ action, count })).sort((a, b) => b.count - a.count),
+      totalIncidents: allIncidents.length
+    });
+  }
+
   // 6. API: GET /api/officer/incidents
   if (pathname === '/api/officer/incidents' && req.method === 'GET') {
     if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
@@ -1454,6 +1486,110 @@ const server = http.createServer(async (req, res) => {
       status: found.status,
       submitted: (found.timestamp || '').split('T')[0]
     });
+  }
+
+  // API: GET /api/careers/positions (Public - lists every position,
+  // including closed ones, so citizens can see what exists even when
+  // nothing is currently hiring - matches the original "APPLICATIONS
+  // CLOSED" notice this replaces, just per-position instead of site-wide.)
+  if (pathname === '/api/careers/positions' && req.method === 'GET') {
+    return sendJSON(res, 200, { positions: readJSONFile('positions.json', DEFAULT_POSITIONS) });
+  }
+
+  // API: POST /api/careers/apply (any signed-in user - citizens and staff
+  // alike can apply)
+  if (pathname === '/api/careers/apply' && req.method === 'POST') {
+    if (!currentSession) return sendJSON(res, 401, { error: 'Authentication Required: You must be signed in with Discord to apply.' });
+    const body = await parseBody(req);
+    const positions = readJSONFile('positions.json', DEFAULT_POSITIONS);
+    const position = positions.find(p => p.id === body.positionId);
+    if (!position) return sendJSON(res, 404, { error: 'Position not found.' });
+    if (position.status !== 'open') return sendJSON(res, 400, { error: 'This position is not currently accepting applications.' });
+
+    const application = {
+      id: 'APP-' + Math.floor(100000 + Math.random() * 900000),
+      applicantId: currentSession.id,
+      applicantName: currentSession.displayName || currentSession.username,
+      positionId: position.id,
+      positionTitle: position.title,
+      coverLetter: String(body.coverLetter || '').trim().slice(0, 3000),
+      status: 'New',
+      timestamp: new Date().toISOString()
+    };
+    const applications = readJSONFile('applications.json', []);
+    applications.unshift(application);
+    if (applications.length > 500) applications.length = 500;
+    writeJSONFile('applications.json', applications);
+    return sendJSON(res, 200, { success: true, record: application });
+  }
+
+  // API: GET /api/admin/careers/applications (Command Only)
+  if (pathname === '/api/admin/careers/applications' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    return sendJSON(res, 200, { applications: readJSONFile('applications.json', []) });
+  }
+
+  // API: POST /api/admin/careers/applications/update (Command Only)
+  if (pathname === '/api/admin/careers/applications/update' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    const body = await parseBody(req);
+    const applications = readJSONFile('applications.json', []);
+    const target = applications.find(a => a.id === body.applicationId);
+    if (!target) return sendJSON(res, 404, { error: 'Application not found' });
+    target.status = body.status || target.status;
+    target.updatedAt = new Date().toISOString();
+    writeJSONFile('applications.json', applications);
+    return sendJSON(res, 200, { success: true, record: target });
+  }
+
+  // API: POST /api/admin/careers/positions (Command Only - create new or
+  // update existing by id, e.g. to flip open/closed)
+  if (pathname === '/api/admin/careers/positions' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    const body = await parseBody(req);
+    const positions = readJSONFile('positions.json', DEFAULT_POSITIONS);
+    if (body.id) {
+      const existing = positions.find(p => p.id === body.id);
+      if (!existing) return sendJSON(res, 404, { error: 'Position not found' });
+      existing.title = String(body.title || existing.title).trim().slice(0, 100);
+      existing.department = String(body.department || existing.department).trim().slice(0, 100);
+      existing.description = String(body.description || existing.description).trim().slice(0, 2000);
+      existing.status = body.status === 'open' ? 'open' : 'closed';
+      writeJSONFile('positions.json', positions);
+      return sendJSON(res, 200, { success: true, record: existing });
+    }
+    const newPosition = {
+      id: 'POS-' + Math.floor(1000 + Math.random() * 9000),
+      title: String(body.title || 'Untitled Position').trim().slice(0, 100),
+      department: String(body.department || 'General').trim().slice(0, 100),
+      description: String(body.description || '').trim().slice(0, 2000),
+      status: body.status === 'open' ? 'open' : 'closed',
+      createdAt: new Date().toISOString()
+    };
+    positions.push(newPosition);
+    writeJSONFile('positions.json', positions);
+    return sendJSON(res, 200, { success: true, record: newPosition });
+  }
+
+  // API: GET /api/my-reports (Public but authenticated - "My Reports"
+  // dashboard for citizens. Any signed-in user, not just staff, matching
+  // /api/report's own gate - reports.json already carries reporterId from
+  // submission.)
+  if (pathname === '/api/my-reports' && req.method === 'GET') {
+    if (!currentSession) return sendJSON(res, 401, { error: 'Unauthorized' });
+    const reports = readJSONFile('reports.json', [])
+      .filter(r => r.reporterId === currentSession.id)
+      .map(r => {
+        const { assignedIA, reporterId, ...rest } = r;
+        return rest;
+      });
+    return sendJSON(res, 200, { reports });
   }
 
   // 8B. API: POST /api/contact/staff (Reach Out to Staff Form)

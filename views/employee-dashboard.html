@@ -493,6 +493,66 @@
             </div>
           </section>
 
+          <!-- Careers Management -->
+          <section class="content-box" style="margin-bottom: 14px;">
+            <h2>Careers Management</h2>
+            <div class="content-box-body">
+              <h3 style="margin: 0 0 8px; font-family: var(--font-brand); font-size: 13px;">Positions</h3>
+              <div class="period-table-wrap" style="margin-bottom: 10px;">
+                <table class="period-table">
+                  <thead>
+                    <tr>
+                      <th>Title</th>
+                      <th>Department</th>
+                      <th style="text-align: center;">Status</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="careersPositionsTableBody">
+                    <tr><td colspan="4" class="table-empty-msg">Loading positions...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <form class="period-form" id="newPositionForm" onsubmit="createPosition(event)">
+                <fieldset>
+                  <legend>Add New Position</legend>
+                  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+                    <label>Title:
+                      <input type="text" name="title" required placeholder="e.g. Traffic Officer" />
+                    </label>
+                    <label>Department:
+                      <input type="text" name="department" required placeholder="e.g. Field Operations" />
+                    </label>
+                  </div>
+                  <label>Description:
+                    <textarea name="description" required placeholder="What this role involves..."></textarea>
+                  </label>
+                </fieldset>
+                <button type="submit" class="period-button period-button-secondary">[ ADD POSITION ]</button>
+                <div id="newPositionStatus" style="margin-top: 8px; font-weight: bold; font-size: 11px;"></div>
+              </form>
+
+              <h3 style="margin: 18px 0 8px; font-family: var(--font-brand); font-size: 13px;">Applications</h3>
+              <div class="period-table-wrap" style="margin-bottom: 0;">
+                <table class="period-table">
+                  <thead>
+                    <tr>
+                      <th>Case No.</th>
+                      <th>Applicant</th>
+                      <th>Position</th>
+                      <th>Filed</th>
+                      <th style="text-align: center;">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="careersApplicationsTableBody">
+                    <tr><td colspan="5" class="table-empty-msg">Loading applications...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
           <!-- Channel Config -->
           <section class="content-box" style="margin-bottom: 14px;">
             <h2>Channel Configuration</h2>
@@ -692,6 +752,7 @@
         loadCommandNews();
         loadRolePermissions();
         loadChannelConfig();
+        loadCareersAdmin();
       }
     }
 
@@ -1992,6 +2053,114 @@
         statusDiv.style.color = '#9E2A2B';
         statusDiv.innerText = 'Network error saving role permissions.';
       }
+    }
+
+    async function loadCareersAdmin() {
+      await Promise.all([loadCareersPositions(), loadCareersApplications()]);
+    }
+
+    async function loadCareersPositions() {
+      const table = document.getElementById('careersPositionsTableBody');
+      try {
+        const res = await fetch('/api/careers/positions');
+        const data = await res.json();
+        const positions = data.positions || [];
+        if (positions.length === 0) {
+          table.innerHTML = '<tr><td colspan="4" class="table-empty-msg">No positions yet.</td></tr>';
+          return;
+        }
+        table.innerHTML = positions.map(p => `
+          <tr>
+            <td><strong>${escapeHtml(p.title)}</strong></td>
+            <td>${escapeHtml(p.department)}</td>
+            <td style="text-align: center;"><span class="status-pill ${p.status === 'open' ? 'status-pill-green' : 'status-pill-red'}">${p.status.toUpperCase()}</span></td>
+            <td>
+              <button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 3px 8px;" onclick="togglePositionStatus('${p.id}', '${p.status === 'open' ? 'closed' : 'open'}')">
+                [ ${p.status === 'open' ? 'CLOSE' : 'OPEN'} ]
+              </button>
+            </td>
+          </tr>
+        `).join('');
+      } catch (e) {
+        table.innerHTML = '<tr><td colspan="4" class="table-empty-msg">Error loading positions.</td></tr>';
+      }
+    }
+
+    async function togglePositionStatus(id, newStatus) {
+      try {
+        await fetch('/api/admin/careers/positions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, status: newStatus })
+        });
+        loadCareersPositions();
+      } catch (e) {}
+    }
+
+    async function createPosition(e) {
+      e.preventDefault();
+      const form = document.getElementById('newPositionForm');
+      const statusDiv = document.getElementById('newPositionStatus');
+      statusDiv.style.color = '#546675';
+      statusDiv.innerText = 'Adding...';
+      try {
+        const res = await fetch('/api/admin/careers/positions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: form.title.value, department: form.department.value, description: form.description.value, status: 'closed' })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          statusDiv.style.color = 'green';
+          statusDiv.innerText = 'Position added (closed by default - open it from the table above).';
+          form.reset();
+          loadCareersPositions();
+        } else {
+          statusDiv.style.color = '#9E2A2B';
+          statusDiv.innerText = 'Error: ' + (data.error || 'Failed to add position.');
+        }
+      } catch (e) {
+        statusDiv.style.color = '#9E2A2B';
+        statusDiv.innerText = 'Network error adding position.';
+      }
+    }
+
+    async function loadCareersApplications() {
+      const table = document.getElementById('careersApplicationsTableBody');
+      try {
+        const res = await fetch('/api/admin/careers/applications');
+        const data = await res.json();
+        const applications = data.applications || [];
+        if (applications.length === 0) {
+          table.innerHTML = '<tr><td colspan="5" class="table-empty-msg">No applications filed yet.</td></tr>';
+          return;
+        }
+        table.innerHTML = applications.map(a => `
+          <tr>
+            <td style="font-family: monospace; font-weight: bold;">${escapeHtml(a.id)}</td>
+            <td>${escapeHtml(a.applicantName)}</td>
+            <td>${escapeHtml(a.positionTitle)}</td>
+            <td style="font-size: 10.5px;">${new Date(a.timestamp).toLocaleDateString()}</td>
+            <td style="text-align: center;">
+              <select onchange="updateApplicationStatus('${a.id}', this.value)">
+                ${['New', 'Reviewing', 'Accepted', 'Rejected'].map(s => `<option value="${s}" ${a.status === s ? 'selected' : ''}>${s}</option>`).join('')}
+              </select>
+            </td>
+          </tr>
+        `).join('');
+      } catch (e) {
+        table.innerHTML = '<tr><td colspan="5" class="table-empty-msg">Error loading applications.</td></tr>';
+      }
+    }
+
+    async function updateApplicationStatus(applicationId, status) {
+      try {
+        await fetch('/api/admin/careers/applications/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ applicationId, status })
+        });
+      } catch (e) {}
     }
 
     async function loadChannelConfig() {
