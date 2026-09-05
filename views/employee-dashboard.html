@@ -6,6 +6,7 @@
   <title>Officer Workbench | Westpoint Security</title>
   <link rel="icon" href="/assets/favicon.png" />
   <link rel="stylesheet" href="/css/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -540,6 +541,103 @@
         </section>
 
         <section id="tab-command" class="dash-section">
+
+          <!-- Operational Flags & Alerts -->
+          <section class="content-box" style="margin-bottom: 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <h2>Operational Flags &amp; Risk Alerts</h2>
+              <button type="button" class="period-button period-button-secondary" style="font-size: 9.5px; padding: 4px 10px;" onclick="loadCommandAlertFlags()">[ REFRESH ALERTS ]</button>
+            </div>
+            <div class="content-box-body">
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px;">
+                <!-- Quota Risk Card -->
+                <div style="background: var(--bg-surface-alt, #ECEFF1); border: 1px solid var(--border-color, #CFD8DC); padding: 12px; border-radius: 2px;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <strong style="font-size: 12px; color: #1E252D;">Weekly Quota Risk Warning</strong>
+                    <span id="quotaRiskCountBadge" class="status-pill status-pill-yellow">0 Flagged</span>
+                  </div>
+                  <p style="font-size: 11px; color: #546675; margin-top: 0; margin-bottom: 8px;">
+                    Officers at risk of failing weekly quota requirement for <span id="quotaRiskWeekSpan">Current Week</span>.
+                  </p>
+                  <div class="period-table-wrap" style="border: none; max-height: 180px; overflow-y: auto;">
+                    <table class="period-table" style="font-size: 11px;">
+                      <thead>
+                        <tr>
+                          <th>Officer</th>
+                          <th>Progress</th>
+                          <th>Risk</th>
+                        </tr>
+                      </thead>
+                      <tbody id="quotaRiskTableBody">
+                        <tr><td colspan="3" class="table-empty-msg">No officers at quota risk.</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <!-- Stale IA Cases Card -->
+                <div style="background: var(--bg-surface-alt, #ECEFF1); border: 1px solid var(--border-color, #CFD8DC); padding: 12px; border-radius: 2px;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <strong style="font-size: 12px; color: #1E252D;">Stale Internal Affairs Cases (>5 Days)</strong>
+                    <span id="staleIACountBadge" class="status-pill status-pill-yellow">0 Pending</span>
+                  </div>
+                  <p style="font-size: 11px; color: #546675; margin-top: 0; margin-bottom: 8px;">
+                    Citizen reports currently uninvestigated or pending resolution past service SLA.
+                  </p>
+                  <div class="period-table-wrap" style="border: none; max-height: 180px; overflow-y: auto;">
+                    <table class="period-table" style="font-size: 11px;">
+                      <thead>
+                        <tr>
+                          <th>Case ID</th>
+                          <th>Type / Subject</th>
+                          <th>Pending</th>
+                        </tr>
+                      </thead>
+                      <tbody id="staleIATableBody">
+                        <tr><td colspan="3" class="table-empty-msg">No stale IA investigations.</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Department Analytics & Trend Reports (Chart.js) -->
+          <section class="content-box" style="margin-bottom: 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <h2>Department Analytics &amp; Deployment Trends</h2>
+              <button type="button" class="period-button period-button-secondary" style="font-size: 9.5px; padding: 4px 10px;" onclick="loadCommandAnalytics()">[ REFRESH DATA ]</button>
+            </div>
+            <div class="content-box-body">
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 14px;">
+                <div style="background: var(--bg-surface-alt, #ECEFF1); border: 1px solid var(--border-color, #CFD8DC); padding: 10px; border-radius: 2px;">
+                  <span style="font-size: 10px; color: #546675; text-transform: uppercase; font-weight: 700;">All-Time Shifts Logged</span>
+                  <div id="analyticsAllTimeShifts" style="font-size: 16px; font-weight: bold; color: #1E252D; margin-top: 4px;">0</div>
+                </div>
+                <div style="background: var(--bg-surface-alt, #ECEFF1); border: 1px solid var(--border-color, #CFD8DC); padding: 10px; border-radius: 2px;">
+                  <span style="font-size: 10px; color: #546675; text-transform: uppercase; font-weight: 700;">Total Patrol Time</span>
+                  <div id="analyticsAllTimeHours" style="font-size: 16px; font-weight: bold; color: #1E252D; margin-top: 4px;">0 hrs</div>
+                </div>
+              </div>
+
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px;">
+                <div style="background: #FFFFFF; border: 1px solid #CFD8DC; padding: 12px; border-radius: 2px;">
+                  <h4 style="margin: 0 0 10px 0; font-size: 12px; color: #1E252D;">8-Week Patrol Hours &amp; Shift Volume</h4>
+                  <div style="height: 240px; position: relative;">
+                    <canvas id="analyticsWeeklyChart"></canvas>
+                  </div>
+                </div>
+                <div style="background: #FFFFFF; border: 1px solid #CFD8DC; padding: 12px; border-radius: 2px;">
+                  <h4 style="margin: 0 0 10px 0; font-size: 12px; color: #1E252D;">24-Hour Peak Duty Hours Deployment</h4>
+                  <div style="height: 240px; position: relative;">
+                    <canvas id="analyticsHourlyChart"></canvas>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
           <!-- Command Staff Action Dispatcher -->
           <section class="content-box" style="margin-bottom: 14px;">
             <h2>Issue Department Action (Administrative Log)</h2>
@@ -1035,6 +1133,9 @@
         loadCommandNews();
         loadRolePermissions();
         loadChannelConfig();
+        loadCommandCareers();
+        loadCommandAnalytics();
+        loadCommandAlertFlags();
       }
     }
 

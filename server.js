@@ -202,7 +202,7 @@ const SECURITY_HEADERS = {
   // bodycam chunks and playback are fetched directly from presigned R2 URLs,
   // not proxied through this server - without this the browser silently
   // blocks every one of those requests as a CSP violation.
-  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' https://discord.com https://cdn.discordapp.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://cdn.discordapp.com; font-src 'self'; media-src 'self' blob: https://*.r2.cloudflarestorage.com; connect-src 'self' https://discord.com https://*.roblox.com https://*.r2.cloudflarestorage.com; frame-ancestors 'none';"
+  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' https://discord.com https://cdn.discordapp.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: https://cdn.discordapp.com; font-src 'self'; media-src 'self' blob: https://*.r2.cloudflarestorage.com; connect-src 'self' https://discord.com https://*.roblox.com https://*.r2.cloudflarestorage.com; frame-ancestors 'none';"
 };
 
 // In-memory active officer web sessions
@@ -2204,6 +2204,188 @@ const server = http.createServer(async (req, res) => {
     }
 
     return sendJSON(res, 200, { success: true, record: target });
+  }
+
+
+  // API: GET /api/admin/analytics (Command Only - 8-week rollups & hourly distribution)
+  if (pathname === '/api/admin/analytics' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+
+    // Generate the last 8 calendar weeks in chronological order
+    const weeksList = [];
+    const now = new Date();
+    for (let i = 7; i >= 0; i--) {
+      const d = new Date(now.getTime() - (i * 7 * 24 * 60 * 60 * 1000));
+      const wk = getWeekKey(d);
+      if (!weeksList.includes(wk)) weeksList.push(wk);
+    }
+
+    const weeklyStats = [];
+    const incidents = readJSONFile('incidents.json', []);
+
+    const incidentsByWeek = {};
+    incidents.forEach(inc => {
+      if (inc.timestamp) {
+        const wk = getWeekKey(new Date(inc.timestamp));
+        incidentsByWeek[wk] = (incidentsByWeek[wk] || 0) + 1;
+      }
+    });
+
+    let totalPatrolSecondsAll = 0;
+    let totalShiftsAll = 0;
+
+    try {
+      const allShifts = db.prepare('SELECT COUNT(*) as count, COALESCE(SUM(duration_seconds), 0) as total FROM shift_history').get();
+      if (allShifts) {
+        totalShiftsAll = allShifts.count;
+        totalPatrolSecondsAll = allShifts.total;
+      }
+    } catch (e) {}
+
+    for (const wk of weeksList) {
+      let totalSeconds = 0;
+      let shiftCount = 0;
+      let activeOfficers = 0;
+      try {
+        const shRow = db.prepare(`
+          SELECT COALESCE(SUM(duration_seconds), 0) as total_seconds,
+                 COUNT(*) as shift_count,
+                 COUNT(DISTINCT user_id) as active_officers
+          FROM shift_history
+          WHERE week_key = ?
+        `).get(wk);
+        if (shRow) {
+          totalSeconds = shRow.total_seconds;
+          shiftCount = shRow.shift_count;
+          activeOfficers = shRow.active_officers;
+        }
+      } catch (e) {}
+
+      weeklyStats.push({
+        weekKey: wk,
+        totalSeconds,
+        totalHours: Math.round((totalSeconds / 3600) * 10) / 10,
+        shiftCount,
+        activeOfficers,
+        incidentCount: incidentsByWeek[wk] || 0
+      });
+    }
+
+    const hourlyDistribution = new Array(24).fill(0);
+    try {
+      const shifts = db.prepare('SELECT start_time FROM shift_history').all();
+      shifts.forEach(s => {
+        if (s.start_time) {
+          const hour = new Date(s.start_time).getHours();
+          if (hour >= 0 && hour < 24) {
+            hourlyDistribution[hour]++;
+          }
+        }
+      });
+    } catch (e) {}
+
+    return sendJSON(res, 200, {
+      weeks: weeklyStats,
+      hourlyDistribution,
+      totalShiftsAllTime: totalShiftsAll,
+      totalPatrolHoursAllTime: Math.round((totalPatrolSecondsAll / 3600) * 10) / 10
+    });
+  }
+
+  // API: GET /api/admin/flags/quota-risk (Supervisor & Command)
+  if (pathname === '/api/admin/flags/quota-risk' && req.method === 'GET') {
+    if (!currentSession || (!currentSession.permissions.isCommand && !currentSession.permissions.isSupervisor)) {
+      return sendJSON(res, 403, { error: 'Access Denied: Supervisor or Command rank required.' });
+    }
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+
+    const weekKey = getWeekKey();
+    const flaggedOfficers = [];
+
+    try {
+      const staffRows = db.prepare('SELECT user_id, roblox_username, last_known_rank, quota_target_seconds FROM staff_members').all();
+      const currentTotals = db.prepare('SELECT user_id, total_seconds FROM weekly_totals WHERE week_key = ?').all(weekKey);
+      const totalMap = {};
+      currentTotals.forEach(t => { totalMap[t.user_id] = t.total_seconds || 0; });
+
+      const dayOfWeek = new Date().getDay();
+      const isLateInWeek = dayOfWeek === 0 || dayOfWeek >= 4;
+
+      staffRows.forEach(s => {
+        const target = Number(s.quota_target_seconds) || 900;
+        const currentSec = totalMap[s.user_id] || 0;
+        const pct = target > 0 ? Math.round((currentSec / target) * 100) : 100;
+
+        if (currentSec < target) {
+          let risk = null;
+          if (currentSec === 0 && isLateInWeek) {
+            risk = 'high';
+          } else if (pct < 50 && isLateInWeek) {
+            risk = 'high';
+          } else if (pct < 75 && (dayOfWeek === 5 || dayOfWeek === 6 || dayOfWeek === 0)) {
+            risk = 'moderate';
+          }
+
+          if (risk) {
+            flaggedOfficers.push({
+              userId: s.user_id,
+              robloxUsername: s.roblox_username || 'Unknown',
+              rank: s.last_known_rank || 'Security Officer',
+              currentSeconds: currentSec,
+              currentFormatted: formatDuration(currentSec),
+              quotaTargetSeconds: target,
+              quotaTargetFormatted: formatDuration(target),
+              percent: pct,
+              riskLevel: risk
+            });
+          }
+        }
+      });
+    } catch (e) {
+      console.error('[QUOTA RISK DB ERROR]', e.message);
+    }
+
+    flaggedOfficers.sort((a, b) => a.percent - b.percent);
+    return sendJSON(res, 200, { flaggedOfficers, weekKey });
+  }
+
+  // API: GET /api/admin/flags/stale-ia (Command & Internal Affairs)
+  if (pathname === '/api/admin/flags/stale-ia' && req.method === 'GET') {
+    if (!currentSession || (!currentSession.permissions.isCommand && !currentSession.permissions.isInternalAffairs)) {
+      return sendJSON(res, 403, { error: 'Access Denied: Internal Affairs or Command rank required.' });
+    }
+    const reports = readJSONFile('reports.json', []);
+    const now = Date.now();
+    const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
+
+    const staleReports = [];
+    reports.forEach(r => {
+      const isUnresolved = ['New', 'Under Review'].includes(r.status);
+      if (isUnresolved && r.timestamp) {
+        const submittedTime = new Date(r.timestamp).getTime();
+        const diffMs = now - submittedTime;
+        if (diffMs > FIVE_DAYS_MS) {
+          staleReports.push({
+            id: r.id,
+            type: r.type,
+            officer: r.officer,
+            location: r.location,
+            status: r.status,
+            submittedDaysAgo: Math.floor(diffMs / (24 * 60 * 60 * 1000)),
+            timestamp: r.timestamp,
+            assignedIA: r.assignedIA || 'Unassigned'
+          });
+        }
+      }
+    });
+
+    staleReports.sort((a, b) => b.submittedDaysAgo - a.submittedDaysAgo);
+    return sendJSON(res, 200, { staleReports });
   }
 
   // 11. API: POST /api/command/action (High Command Only - Issues Staff Action & Sends Discord Embed)
