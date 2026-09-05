@@ -167,6 +167,33 @@ test('command-only endpoints reject unauthenticated requests', async () => {
   assert.strictEqual(res.status, 403);
 });
 
+test('GET /api/push/vapid-public-key rejects unauthenticated requests', async () => {
+  const res = await get('/api/push/vapid-public-key');
+  assert.strictEqual(res.status, 401);
+});
+
+test('POST /api/push/subscribe rejects unauthenticated requests', async () => {
+  const res = await post('/api/push/subscribe', {});
+  assert.strictEqual(res.status, 401);
+});
+
+test('POST /api/push/unsubscribe rejects unauthenticated requests', async () => {
+  const res = await post('/api/push/unsubscribe', {});
+  assert.strictEqual(res.status, 401);
+});
+
+test('GET /sw.js is served as a static file', async () => {
+  const res = await get('/sw.js');
+  assert.strictEqual(res.status, 200);
+});
+
+test('GET /manifest.json is served and parses as valid JSON', async () => {
+  const res = await get('/manifest.json');
+  assert.strictEqual(res.status, 200);
+  const body = JSON.parse(res.body);
+  assert.strictEqual(body.short_name, 'Westpoint');
+});
+
 test('unknown routes 404', async () => {
   const res = await get('/this-route-does-not-exist-xyz');
   assert.strictEqual(res.status, 404);

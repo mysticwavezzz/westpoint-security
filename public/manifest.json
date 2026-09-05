@@ -1,0 +1,12 @@
+{
+  "name": "Westpoint Security Officer Portal",
+  "short_name": "Westpoint",
+  "start_url": "/employee/dashboard",
+  "display": "standalone",
+  "background_color": "#1E252D",
+  "theme_color": "#8E2425",
+  "icons": [
+    { "src": "/assets/logo.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/assets/logo.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

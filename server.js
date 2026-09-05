@@ -21,6 +21,7 @@ const r2 = require('./lib/r2.js');
 const video = require('./lib/video.js');
 const videoLog = require('./lib/videoLog.js');
 const { REST: DiscordREST, Routes: DiscordRoutes } = require('discord.js');
+const webpush = require('web-push');
 // Shared with the Discord bot (resilient-meitner). That bot currently only
 // runs on this machine, so this only resolves where the bot's SQLite file is
 // actually reachable on disk — override with BOT_DB_PATH in .env for any
@@ -200,6 +201,27 @@ const DEFAULT_POSITIONS = [
   { id: 'POS-1002', title: 'Dispatcher', department: 'Operations Center', description: 'Coordinate officer response and radio traffic from the operations desk.', status: 'closed', createdAt: '2026-01-01T00:00:00.000Z' },
   { id: 'POS-1003', title: 'Field Supervisor', department: 'Field Operations', description: 'Oversee patrol shifts and mentor junior officers.', status: 'closed', createdAt: '2026-01-01T00:00:00.000Z' }
 ];
+
+// FTO (Field Training Officer) checklist stages - fixed list rather than
+// free text, so progress is actually queryable/consistent across trainees.
+const FTO_STAGES = ['Radio Procedures', 'Traffic Stops', 'Report Writing', 'Use of Force Policy', 'Final Ride-Along'];
+
+// Predefined staff flag vocabulary - Command picks from this list rather
+// than free-typing, so flags stay consistent/filterable. Extensible later;
+// "FTO Trainee" is set/cleared automatically by the FTO endpoints below,
+// the rest are Command's to apply manually from the Staff Directory.
+const STAFF_FLAGS = ['Awaiting Field Eval', 'On Leave', 'Under Review', 'FTO Trainee', 'FTO Trainer'];
+
+function setStaffFlag(userId, flagName, setBy) {
+  getBotDb().prepare(`
+    INSERT INTO staff_flags (user_id, flag_name, set_by, set_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT(user_id, flag_name) DO UPDATE SET set_by = excluded.set_by, set_at = excluded.set_at
+  `).run(userId, flagName, setBy, Date.now());
+}
+
+function clearStaffFlag(userId, flagName) {
+  getBotDb().prepare('DELETE FROM staff_flags WHERE user_id = ? AND flag_name = ?').run(userId, flagName);
+}
 
 const LEGACY_ROLE_SEED = {
   '1522793591112466493': { displayName: 'Security Chief', isCommand: true },
@@ -417,6 +439,38 @@ function getBotDb() {
       CREATE TABLE IF NOT EXISTS video_channel_clears (
         week_key TEXT PRIMARY KEY,
         cleared_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS fto_assignments (
+        id TEXT PRIMARY KEY,
+        trainee_user_id TEXT NOT NULL,
+        trainer_user_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        started_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        notes TEXT
+      );
+      CREATE TABLE IF NOT EXISTS fto_signoffs (
+        id TEXT PRIMARY KEY,
+        assignment_id TEXT NOT NULL,
+        stage_name TEXT NOT NULL,
+        signed_off_by TEXT NOT NULL,
+        signed_off_at INTEGER NOT NULL,
+        notes TEXT
+      );
+      CREATE TABLE IF NOT EXISTS staff_flags (
+        user_id TEXT NOT NULL,
+        flag_name TEXT NOT NULL,
+        set_by TEXT NOT NULL,
+        set_at INTEGER NOT NULL,
+        PRIMARY KEY (user_id, flag_name)
+      );
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        user_id TEXT NOT NULL,
+        endpoint TEXT NOT NULL,
+        p256dh TEXT NOT NULL,
+        auth TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (user_id, endpoint)
       );
     `);
     // Older bot.db files predate these columns/tables.
@@ -681,6 +735,77 @@ async function dmDiscordUser(userId, content) {
     return false;
   }
 }
+
+// Web Push setup - only configured if both VAPID env vars are set (they
+// have no hardcoded fallback, unlike the Discord IDs elsewhere in this
+// file, since they're secret and per-deployment). Generate a keypair once
+// via `require('web-push').generateVAPIDKeys()` and set the two env vars;
+// never reuse the same keypair across dev and production.
+const VAPID_CONFIGURED = !!(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
+if (VAPID_CONFIGURED) {
+  webpush.setVapidDetails('mailto:admin@westpointsecurity.xyz', process.env.VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY);
+}
+
+// Sends a web push notification to every subscription a user has
+// registered (they may have more than one - multiple browsers/devices).
+// Prunes subscriptions the push service reports as gone (410/404) rather
+// than retrying them forever.
+async function pushToUser(userId, payload) {
+  if (!VAPID_CONFIGURED) return;
+  const db = getBotDb();
+  if (!db) return;
+  const subs = db.prepare('SELECT * FROM push_subscriptions WHERE user_id = ?').all(userId);
+  for (const sub of subs) {
+    try {
+      await webpush.sendNotification(
+        { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+        JSON.stringify(payload)
+      );
+    } catch (e) {
+      if (e.statusCode === 410 || e.statusCode === 404) {
+        db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').run(sub.endpoint);
+      } else {
+        console.error('[PUSH ERROR]', userId, e.message);
+      }
+    }
+  }
+}
+
+// Quota-compliance push reminder. There is no shift-scheduling system in
+// this app (nothing assigns officers to a future shift time), so "shift
+// reminders" is interpreted as nudging officers under their weekly quota
+// target as the week runs out, on the same week-key convention used by the
+// leaderboard/CSV export above.
+async function sendQuotaReminders() {
+  if (!VAPID_CONFIGURED) return;
+  const db = getBotDb();
+  if (!db) return;
+  try {
+    const weekKey = getWeekKey();
+    const atRisk = db.prepare(`
+      SELECT sh.user_id AS userId,
+             COALESCE(wt.total_seconds, 0) AS totalSeconds,
+             COALESCE(s.quota_target_seconds, 900) AS quotaTargetSeconds
+      FROM (SELECT DISTINCT user_id FROM shift_history WHERE week_key = ?) sh
+      LEFT JOIN weekly_totals wt ON wt.user_id = sh.user_id AND wt.week_key = ?
+      LEFT JOIN staff_members s ON s.user_id = sh.user_id
+    `).all(weekKey, weekKey).filter(r => r.totalSeconds < r.quotaTargetSeconds);
+
+    for (const row of atRisk) {
+      const remaining = formatDuration(Math.max(0, row.quotaTargetSeconds - row.totalSeconds));
+      await pushToUser(row.userId, {
+        title: 'Quota Reminder',
+        body: `You're ${remaining} short of this week's quota. Log a shift before the week resets.`,
+        url: '/employee/dashboard'
+      });
+    }
+  } catch (e) {
+    console.error('[QUOTA REMINDER ERROR]', e.message);
+  }
+}
+// Runs once a day; only actually pushes to officers who are both under quota
+// and have an active push subscription (most days this is a fast no-op).
+setInterval(sendQuotaReminders, 24 * 60 * 60 * 1000);
 
 // Fetch Guild Member via Bot Token
 function fetchGuildMember(discordUserId) {
@@ -1263,13 +1388,214 @@ const server = http.createServer(async (req, res) => {
     const db = getBotDb();
     if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
     const rows = db.prepare('SELECT * FROM staff_members ORDER BY roblox_username COLLATE NOCASE ASC').all();
+    const allFlags = db.prepare('SELECT * FROM staff_flags').all();
+    const flagsByUser = {};
+    allFlags.forEach(f => {
+      if (!flagsByUser[f.user_id]) flagsByUser[f.user_id] = [];
+      flagsByUser[f.user_id].push(f.flag_name);
+    });
     return sendJSON(res, 200, {
       staff: rows.map(r => ({
         userId: r.user_id,
         robloxUsername: r.roblox_username || 'Unknown',
         rank: r.last_known_rank || 'Unranked',
-        lastActive: r.updated_at
+        lastActive: r.updated_at,
+        flags: flagsByUser[r.user_id] || []
       }))
+    });
+  }
+
+  // API: POST /api/admin/staff-flags (Command Only - add or remove a
+  // predefined flag on any staff member, shown on the Staff Directory)
+  if (pathname === '/api/admin/staff-flags' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    const body = await parseBody(req);
+    if (!STAFF_FLAGS.includes(body.flagName)) return sendJSON(res, 400, { error: 'Unknown flag name.' });
+    if (!body.userId) return sendJSON(res, 400, { error: 'Missing userId.' });
+    if (body.action === 'remove') {
+      clearStaffFlag(body.userId, body.flagName);
+    } else {
+      setStaffFlag(body.userId, body.flagName, currentSession.displayName);
+    }
+    return sendJSON(res, 200, { success: true });
+  }
+
+  // API: GET /api/staff-flags/options (Officer+ - the fixed flag vocabulary,
+  // for populating the manage-flags UI)
+  if (pathname === '/api/staff-flags/options' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
+    return sendJSON(res, 200, { flags: STAFF_FLAGS });
+  }
+
+  // API: GET /api/push/vapid-public-key (Officer+)
+  if (pathname === '/api/push/vapid-public-key' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
+    if (!VAPID_CONFIGURED) return sendJSON(res, 503, { error: 'Push notifications are not configured on this server.' });
+    return sendJSON(res, 200, { publicKey: process.env.VAPID_PUBLIC_KEY });
+  }
+
+  // API: POST /api/push/subscribe (Officer+ - body is a browser
+  // PushSubscription.toJSON() shape)
+  if (pathname === '/api/push/subscribe' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
+    const body = await parseBody(req);
+    if (!body.endpoint || !body.keys || !body.keys.p256dh || !body.keys.auth) {
+      return sendJSON(res, 400, { error: 'Invalid subscription.' });
+    }
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+    db.prepare(`
+      INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, created_at) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth
+    `).run(currentSession.id, body.endpoint, body.keys.p256dh, body.keys.auth, Date.now());
+    return sendJSON(res, 200, { success: true });
+  }
+
+  // API: POST /api/push/unsubscribe (Officer+)
+  if (pathname === '/api/push/unsubscribe' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
+    const body = await parseBody(req);
+    const db = getBotDb();
+    if (db && body.endpoint) db.prepare('DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?').run(currentSession.id, body.endpoint);
+    return sendJSON(res, 200, { success: true });
+  }
+
+  // API: GET /api/fto/stages (Officer+ - the fixed checklist stage list)
+  if (pathname === '/api/fto/stages' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
+    return sendJSON(res, 200, { stages: FTO_STAGES });
+  }
+
+  // API: POST /api/command/fto/assign (Command Only)
+  if (pathname === '/api/command/fto/assign' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    const body = await parseBody(req);
+    if (!body.traineeUserId || !body.trainerUserId) return sendJSON(res, 400, { error: 'Missing traineeUserId or trainerUserId.' });
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+    const assignmentId = 'FTO-' + Math.floor(100000 + Math.random() * 900000);
+    db.prepare(`
+      INSERT INTO fto_assignments (id, trainee_user_id, trainer_user_id, status, started_at)
+      VALUES (?, ?, ?, 'active', ?)
+    `).run(assignmentId, body.traineeUserId, body.trainerUserId, Date.now());
+    setStaffFlag(body.traineeUserId, 'FTO Trainee', currentSession.displayName);
+    setStaffFlag(body.trainerUserId, 'FTO Trainer', currentSession.displayName);
+    return sendJSON(res, 200, { success: true, assignmentId });
+  }
+
+  // API: GET /api/command/fto/assignments (Command Only - all assignments,
+  // joined with staff_members for display names)
+  if (pathname === '/api/command/fto/assignments' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+    const assignments = db.prepare('SELECT * FROM fto_assignments ORDER BY started_at DESC').all();
+    const staffMap = {};
+    db.prepare('SELECT user_id, roblox_username FROM staff_members').all().forEach(s => { staffMap[s.user_id] = s.roblox_username; });
+    return sendJSON(res, 200, {
+      assignments: assignments.map(a => ({
+        id: a.id,
+        traineeUserId: a.trainee_user_id,
+        traineeName: staffMap[a.trainee_user_id] || a.trainee_user_id,
+        trainerUserId: a.trainer_user_id,
+        trainerName: staffMap[a.trainer_user_id] || a.trainer_user_id,
+        status: a.status,
+        startedAt: a.started_at,
+        completedAt: a.completed_at
+      }))
+    });
+  }
+
+  // API: GET /api/fto/my-progress (Officer+ - the caller's own active
+  // assignment as trainee; ?userId= lets a trainer/Supervisor view someone
+  // else's, gated to isSupervisor for that case)
+  if (pathname === '/api/fto/my-progress' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
+    const targetUserId = parsedUrl.query.userId || currentSession.id;
+    if (targetUserId !== currentSession.id && !currentSession.permissions.isSupervisor) {
+      return sendJSON(res, 403, { error: 'Access denied' });
+    }
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+    const assignment = db.prepare("SELECT * FROM fto_assignments WHERE trainee_user_id = ? AND status = 'active' ORDER BY started_at DESC LIMIT 1").get(targetUserId);
+    if (!assignment) return sendJSON(res, 200, { assignment: null });
+    const signoffs = db.prepare('SELECT * FROM fto_signoffs WHERE assignment_id = ?').all(assignment.id);
+    const signoffByStage = {};
+    signoffs.forEach(s => { signoffByStage[s.stage_name] = s; });
+    return sendJSON(res, 200, {
+      assignment: {
+        id: assignment.id,
+        trainerUserId: assignment.trainer_user_id,
+        startedAt: assignment.started_at,
+        stages: FTO_STAGES.map(stage => ({
+          stage,
+          signedOff: !!signoffByStage[stage],
+          signedOffBy: signoffByStage[stage]?.signed_off_by || null,
+          signedOffAt: signoffByStage[stage]?.signed_off_at || null
+        }))
+      }
+    });
+  }
+
+  // API: POST /api/fto/signoff (the assignment's trainer, or isSupervisor)
+  if (pathname === '/api/fto/signoff' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
+    const body = await parseBody(req);
+    if (!FTO_STAGES.includes(body.stageName)) return sendJSON(res, 400, { error: 'Unknown stage name.' });
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+    const assignment = db.prepare('SELECT * FROM fto_assignments WHERE id = ?').get(body.assignmentId);
+    if (!assignment) return sendJSON(res, 404, { error: 'Assignment not found' });
+    if (assignment.trainer_user_id !== currentSession.id && !currentSession.permissions.isSupervisor) {
+      return sendJSON(res, 403, { error: 'Only the assigned trainer or a Supervisor can sign off this assignment.' });
+    }
+    db.prepare(`
+      INSERT INTO fto_signoffs (id, assignment_id, stage_name, signed_off_by, signed_off_at, notes)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run('SIGN-' + Math.floor(100000 + Math.random() * 900000), body.assignmentId, body.stageName, currentSession.displayName, Date.now(), body.notes || null);
+
+    const doneCount = db.prepare('SELECT COUNT(DISTINCT stage_name) AS c FROM fto_signoffs WHERE assignment_id = ?').get(body.assignmentId).c;
+    if (doneCount >= FTO_STAGES.length) {
+      db.prepare("UPDATE fto_assignments SET status = 'completed', completed_at = ? WHERE id = ?").run(Date.now(), body.assignmentId);
+      clearStaffFlag(assignment.trainee_user_id, 'FTO Trainee');
+    }
+    return sendJSON(res, 200, { success: true, completed: doneCount >= FTO_STAGES.length });
+  }
+
+  // API: GET /api/officer/stats (Officer+ - personal career stats: lifetime
+  // duty hours, incidents filed, commendations received. Commendation
+  // count is best-effort: reports.json's "officer" field is free text the
+  // citizen typed in ("Officer John Doe, Unit 4"), not a real foreign key
+  // to a user id, so this matches by substring against the officer's
+  // display name rather than an exact/guaranteed-accurate count - the
+  // frontend labels it as such.)
+  if (pathname === '/api/officer/stats' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+    const lifetimeRow = db.prepare('SELECT SUM(duration_seconds) AS total FROM shift_history WHERE user_id = ?').get(currentSession.id);
+    const lifetimeSeconds = lifetimeRow?.total || 0;
+
+    const incidents = readJSONFile('incidents.json', []);
+    const incidentsFiled = incidents.filter(i => i.officerId === currentSession.id).length;
+
+    const reports = readJSONFile('reports.json', []);
+    const nameNeedle = String(currentSession.displayName || '').toLowerCase();
+    const commendationsReceived = nameNeedle
+      ? reports.filter(r => r.type === 'Commendation' && String(r.officer || '').toLowerCase().includes(nameNeedle)).length
+      : 0;
+
+    return sendJSON(res, 200, {
+      lifetimeSeconds,
+      lifetimeFormatted: formatDuration(lifetimeSeconds),
+      incidentsFiled,
+      commendationsReceived
     });
   }
 

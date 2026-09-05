@@ -6,6 +6,8 @@
   <title>Officer Workbench | Westpoint Security</title>
   <link rel="icon" href="/assets/favicon.png" />
   <link rel="stylesheet" href="/css/style.css" />
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#8E2425" />
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -78,6 +80,7 @@
           <button type="button" class="dash-tab-btn" id="tabBtnIA" style="display: none;" onclick="switchTab('ia')">4. Internal Affairs Desk</button>
           <button type="button" class="dash-tab-btn" id="tabBtnStaffDirectory" onclick="switchTab('staff-directory')">5. Staff Directory</button>
           <button type="button" class="dash-tab-btn" id="tabBtnCommand" style="display: none;" onclick="switchTab('command')">6. Command Center</button>
+          <button type="button" class="dash-tab-btn" onclick="switchTab('settings')">7. Settings</button>
         </div>
 
         <!-- ==============================================
@@ -118,6 +121,43 @@
                     * When prompted, share the <strong>Roblox window</strong>, not your full screen - the browser's picker is the only thing that can restrict what's shared, so double-check before confirming. Recording saves to the department server, not your PC, and is visible live to Supervisors+ on the Duty Roster tab. Records continuously at reduced quality/frame rate to keep storage use low - chat and text stay readable, smooth motion is traded away.
                   </p>
                 </div>
+              </div>
+            </section>
+
+            <!-- Personal Career Stats -->
+            <section class="content-box">
+              <h2>My Career Stats</h2>
+              <div class="content-box-body" id="myStatsBody">
+                <p style="font-size: 11px; color: #546675;">Loading...</p>
+              </div>
+            </section>
+
+            <!-- FTO Progress (shown if the officer has an active assignment as trainee) -->
+            <section class="content-box" id="ftoProgressBox" style="display: none;">
+              <h2>My FTO Progress</h2>
+              <div class="content-box-body" id="ftoProgressBody"></div>
+            </section>
+
+            <!-- FTO Trainer Sign-Off (any officer can try - server enforces they're actually the assigned trainer or a Supervisor) -->
+            <section class="content-box">
+              <h2>FTO Trainer Sign-Off</h2>
+              <div class="content-box-body">
+                <form class="period-form" id="ftoSignoffForm" onsubmit="submitFtoSignoff(event)">
+                  <fieldset>
+                    <legend>Sign Off a Trainee's Stage</legend>
+                    <label>Assignment ID (from Command or the trainee):
+                      <input type="text" name="assignmentId" required placeholder="FTO-XXXXXX" />
+                    </label>
+                    <label>Stage:
+                      <select name="stageName" id="ftoStageSelect" required></select>
+                    </label>
+                    <label>Notes (optional):
+                      <textarea name="notes" placeholder="Observations..."></textarea>
+                    </label>
+                  </fieldset>
+                  <button type="submit" class="period-button period-button-secondary">[ SIGN OFF STAGE ]</button>
+                  <div id="ftoSignoffStatus" style="margin-top: 8px; font-weight: bold; font-size: 11px;"></div>
+                </form>
               </div>
             </section>
 
@@ -392,6 +432,8 @@
                       <th>Rank</th>
                       <th>Discord User ID</th>
                       <th>Last Active</th>
+                      <th>Flags</th>
+                      <th id="staffDirectoryManageCol" style="display: none;"></th>
                     </tr>
                   </thead>
                   <tbody id="staffDirectoryTableBody">
@@ -490,6 +532,46 @@
               </div>
               <button type="button" class="period-button" onclick="saveRolePermissions()">[ SAVE ROLE PERMISSIONS ]</button>
               <div id="rolePermissionsStatus" style="margin-top: 8px; font-weight: bold; font-size: 11px;"></div>
+            </div>
+          </section>
+
+          <!-- FTO Program -->
+          <section class="content-box" style="margin-bottom: 14px;">
+            <h2>Field Training Officer (FTO) Program</h2>
+            <div class="content-box-body">
+              <form class="period-form" id="ftoAssignForm" onsubmit="assignFto(event)">
+                <fieldset>
+                  <legend>New Assignment</legend>
+                  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+                    <label>Trainee (Discord User ID):
+                      <input type="text" name="traineeUserId" required placeholder="Trainee's Discord User ID" />
+                    </label>
+                    <label>Trainer (Discord User ID):
+                      <input type="text" name="trainerUserId" required placeholder="Trainer's Discord User ID" />
+                    </label>
+                  </div>
+                  <p style="font-size: 10px; color: #90A4AE; margin: 4px 0 0;">Copy IDs from the Staff Directory tab.</p>
+                </fieldset>
+                <button type="submit" class="period-button period-button-secondary">[ ASSIGN ]</button>
+                <div id="ftoAssignStatus" style="margin-top: 8px; font-weight: bold; font-size: 11px;"></div>
+              </form>
+
+              <h3 style="margin: 18px 0 8px; font-family: var(--font-brand); font-size: 13px;">Assignments</h3>
+              <div class="period-table-wrap" style="margin-bottom: 0;">
+                <table class="period-table">
+                  <thead>
+                    <tr>
+                      <th>Trainee</th>
+                      <th>Trainer</th>
+                      <th style="text-align: center;">Status</th>
+                      <th>Started</th>
+                    </tr>
+                  </thead>
+                  <tbody id="ftoAssignmentsTableBody">
+                    <tr><td colspan="4" class="table-empty-msg">Loading assignments...</td></tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
           </section>
 
@@ -669,6 +751,57 @@
             </div>
           </section>
         </section>
+
+        <!-- ==============================================
+             TAB 7: SETTINGS
+             ============================================== -->
+        <section id="tab-settings" class="dash-section">
+          <div class="feature-grid">
+            <section class="content-box">
+              <h2>Notifications</h2>
+              <div class="content-box-body">
+                <p style="font-size: 11.5px; color: #546675;">
+                  Get a browser notification when you're behind on your weekly quota as the week runs out. This uses your browser's push permission, not email or SMS.
+                </p>
+                <div id="pushStatusLine" style="margin: 8px 0; font-weight: bold; font-size: 11.5px;">Checking notification support...</div>
+                <button type="button" id="pushEnableBtn" class="period-button" onclick="enablePushNotifications()" style="display: none;">[ ENABLE NOTIFICATIONS ]</button>
+                <button type="button" id="pushDisableBtn" class="period-button period-button-secondary" onclick="disablePushNotifications()" style="display: none;">[ DISABLE NOTIFICATIONS ]</button>
+              </div>
+            </section>
+
+            <section class="content-box">
+              <h2>Audio Feedback</h2>
+              <div class="content-box-body">
+                <p style="font-size: 11.5px; color: #546675;">
+                  Subtle mechanical click and radio squelch tones on dashboard actions. Synthesized locally - no audio files, nothing downloaded.
+                </p>
+                <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; cursor: pointer;">
+                  <input type="checkbox" id="audioFeedbackToggle" onchange="setAudioFeedbackEnabled(this.checked)" />
+                  Enable audio feedback
+                </label>
+              </div>
+            </section>
+
+            <section class="content-box">
+              <h2>Dashboard Widgets</h2>
+              <div class="content-box-body">
+                <p style="font-size: 11.5px; color: #546675;">
+                  Hide cards you don't use on the Field Station tab. Hidden cards can be restored here at any time.
+                </p>
+                <div id="widgetVisibilityList" style="display: flex; flex-direction: column; gap: 6px;"></div>
+              </div>
+            </section>
+
+            <section class="content-box">
+              <h2>Command Terminal</h2>
+              <div class="content-box-body">
+                <p style="font-size: 11.5px; color: #546675;">
+                  Press <kbd>Ctrl</kbd>+<kbd>K</kbd> (or <kbd>~</kbd>) anywhere on the dashboard to open a command palette - jump to a tab, look up a name, or toggle duty without touching the mouse.
+                </p>
+              </div>
+            </section>
+          </div>
+        </section>
       </article>
     </main>
 
@@ -702,6 +835,17 @@
             <div id="shiftPlaybackParts"></div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- Manage Staff Flags Modal (Command) -->
+    <div id="manageFlagsModal" style="display: none; position: fixed; inset: 0; background: rgba(15,20,25,0.85); z-index: 500; align-items: center; justify-content: center; padding: 20px;">
+      <div style="background: #fff; max-width: 420px; width: 100%; border: 1px solid #CFD8DC;">
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: #1E252D; color: #fff;">
+          <strong id="manageFlagsTitle" style="font-size: 12px;">Manage Flags</strong>
+          <button type="button" class="period-button period-button-secondary" style="font-size: 9.5px; padding: 3px 10px;" onclick="document.getElementById('manageFlagsModal').style.display='none'">[ CLOSE ]</button>
+        </div>
+        <div style="padding: 14px;" id="manageFlagsList"></div>
       </div>
     </div>
 
@@ -753,6 +897,11 @@
         loadRolePermissions();
         loadChannelConfig();
         loadCareersAdmin();
+        loadFtoAssignments();
+      }
+      if (tabKey === 'settings') {
+        buttons[buttons.length - 1]?.classList.add('is-active');
+        refreshPushUI();
       }
     }
 
@@ -796,6 +945,10 @@
 
         // Configure Rank Badge & Permissions
         const perms = data.permissions || {};
+        window.currentPermissions = perms;
+        if (perms.isCommand) {
+          document.getElementById('staffDirectoryManageCol').style.display = 'table-cell';
+        }
         const badgeRole = document.getElementById('officerBadgeRole');
         const rankName = (data.highestRank || 'SECURITY OFFICER').toUpperCase();
         badgeRole.innerText = rankName;
@@ -1574,7 +1727,7 @@
         staffDirectoryAll = data.staff || [];
         renderStaffDirectoryPage(1);
       } catch (e) {
-        table.innerHTML = '<tr><td colspan="4" class="table-empty-msg">Error loading staff directory.</td></tr>';
+        table.innerHTML = '<tr><td colspan="6" class="table-empty-msg">Error loading staff directory.</td></tr>';
       }
     }
 
@@ -1588,7 +1741,7 @@
         : staffDirectoryAll;
 
       if (filtered.length === 0) {
-        table.innerHTML = `<tr><td colspan="4" class="table-empty-msg">${staffDirectoryAll.length === 0 ? 'No staff members tracked yet.' : 'No staff match that search.'}</td></tr>`;
+        table.innerHTML = `<tr><td colspan="6" class="table-empty-msg">${staffDirectoryAll.length === 0 ? 'No staff members tracked yet.' : 'No staff match that search.'}</td></tr>`;
         pagination.innerHTML = '';
         return;
       }
@@ -1596,6 +1749,7 @@
       const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
       const currentPage = Math.min(Math.max(1, page), totalPages);
       const pageRows = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+      const isCommand = !!(window.currentPermissions && window.currentPermissions.isCommand);
 
       table.innerHTML = pageRows.map(s => `
         <tr>
@@ -1603,6 +1757,8 @@
           <td>${escapeHtml(s.rank)}</td>
           <td style="font-family: monospace; font-size: 11px;">${escapeHtml(s.userId)}</td>
           <td style="font-size: 10.5px;">${s.lastActive ? new Date(s.lastActive).toLocaleString() : 'N/A'}</td>
+          <td>${(s.flags || []).map(f => `<span class="status-pill status-pill-purple" style="margin-right: 3px;">${escapeHtml(f)}</span>`).join('') || '<span style="color: #90A4AE; font-size: 10px;">None</span>'}</td>
+          ${isCommand ? `<td><button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 3px 8px;" onclick="openManageFlags('${escapeHtml(s.userId)}', '${escapeHtml(s.robloxUsername).replace(/'/g, "\\'")}')">[ MANAGE FLAGS ]</button></td>` : ''}
         </tr>
       `).join('');
 
@@ -1614,6 +1770,42 @@
           <button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 3px 8px;" ${currentPage >= totalPages ? 'disabled' : ''} onclick="renderStaffDirectoryPage(${currentPage + 1})">[ NEXT &raquo; ]</button>
         </span>
       `;
+    }
+
+    let manageFlagsUserId = null;
+
+    async function openManageFlags(userId, robloxUsername) {
+      manageFlagsUserId = userId;
+      document.getElementById('manageFlagsTitle').innerText = 'Manage Flags — ' + robloxUsername;
+      const listEl = document.getElementById('manageFlagsList');
+      listEl.innerHTML = '<p style="font-size: 11px; color: #546675;">Loading...</p>';
+      document.getElementById('manageFlagsModal').style.display = 'flex';
+      try {
+        const [optionsRes, current] = await Promise.all([
+          fetch('/api/staff-flags/options').then(r => r.json()),
+          Promise.resolve((staffDirectoryAll.find(s => s.userId === userId) || {}).flags || [])
+        ]);
+        const options = optionsRes.flags || [];
+        listEl.innerHTML = options.map(flag => `
+          <label style="display: flex; align-items: center; gap: 8px; font-size: 11.5px; margin-bottom: 8px; font-weight: normal;">
+            <input type="checkbox" data-flag="${escapeHtml(flag)}" ${current.includes(flag) ? 'checked' : ''} onchange="toggleStaffFlag('${escapeHtml(userId)}', '${escapeHtml(flag)}', this.checked)" />
+            ${escapeHtml(flag)}
+          </label>
+        `).join('');
+      } catch (e) {
+        listEl.innerHTML = '<p style="font-size: 11px; color: #9E2A2B;">Error loading flag options.</p>';
+      }
+    }
+
+    async function toggleStaffFlag(userId, flagName, checked) {
+      try {
+        await fetch('/api/admin/staff-flags', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId, flagName, action: checked ? 'add' : 'remove' })
+        });
+        loadStaffDirectory();
+      } catch (e) {}
     }
 
     async function loadIncidents() {
@@ -2055,6 +2247,62 @@
       }
     }
 
+    async function assignFto(e) {
+      e.preventDefault();
+      const form = document.getElementById('ftoAssignForm');
+      const statusDiv = document.getElementById('ftoAssignStatus');
+      statusDiv.style.color = '#546675';
+      statusDiv.innerText = 'Assigning...';
+      try {
+        const res = await fetch('/api/command/fto/assign', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ traineeUserId: form.traineeUserId.value.trim(), trainerUserId: form.trainerUserId.value.trim() })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          statusDiv.style.color = 'green';
+          statusDiv.innerText = 'Assigned - trainee flagged "Awaiting Field Eval" via FTO Trainee.';
+          form.reset();
+          loadFtoAssignments();
+        } else {
+          statusDiv.style.color = '#9E2A2B';
+          statusDiv.innerText = 'Error: ' + (data.error || 'Failed to assign.');
+        }
+      } catch (e) {
+        statusDiv.style.color = '#9E2A2B';
+        statusDiv.innerText = 'Network error assigning FTO.';
+      }
+    }
+
+    async function loadFtoAssignments() {
+      const table = document.getElementById('ftoAssignmentsTableBody');
+      try {
+        const res = await fetch('/api/command/fto/assignments');
+        const data = await res.json();
+        const assignments = data.assignments || [];
+        if (assignments.length === 0) {
+          table.innerHTML = '<tr><td colspan="4" class="table-empty-msg">No FTO assignments yet.</td></tr>';
+          return;
+        }
+        table.innerHTML = assignments.map(a => {
+          let pillClass = 'status-pill-yellow';
+          if (a.status === 'completed') pillClass = 'status-pill-green';
+          if (a.status === 'terminated') pillClass = 'status-pill-red';
+          return `
+            <tr>
+              <td><strong>${escapeHtml(a.traineeName)}</strong></td>
+              <td>${escapeHtml(a.trainerName)}</td>
+              <td style="text-align: center;"><span class="status-pill ${pillClass}">${a.status.toUpperCase()}</span></td>
+              <td style="font-size: 10.5px;">${new Date(a.startedAt).toLocaleDateString()}</td>
+            </tr>
+          `;
+        }).join('');
+      } catch (e) {
+        table.innerHTML = '<tr><td colspan="4" class="table-empty-msg">Error loading assignments.</td></tr>';
+      }
+    }
+
     async function loadCareersAdmin() {
       await Promise.all([loadCareersPositions(), loadCareersApplications()]);
     }
@@ -2218,11 +2466,506 @@
         .replace(/'/g, '&#39;');
     }
 
+    async function loadFtoStageOptions() {
+      try {
+        const res = await fetch('/api/fto/stages');
+        const data = await res.json();
+        const select = document.getElementById('ftoStageSelect');
+        if (select) select.innerHTML = (data.stages || []).map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+      } catch (e) {}
+    }
+
+    async function loadMyFtoProgress() {
+      try {
+        const res = await fetch('/api/fto/my-progress');
+        const data = await res.json();
+        const box = document.getElementById('ftoProgressBox');
+        const body = document.getElementById('ftoProgressBody');
+        if (!data.assignment) {
+          box.style.display = 'none';
+          return;
+        }
+        box.style.display = 'block';
+        body.innerHTML = `
+          <ul style="margin: 0; padding-left: 18px; font-size: 11.5px;">
+            ${data.assignment.stages.map(s => `
+              <li style="margin-bottom: 4px;">
+                ${s.signedOff ? '<span class="status-pill status-pill-green">DONE</span>' : '<span class="status-pill status-pill-yellow">PENDING</span>'}
+                ${escapeHtml(s.stage)}
+                ${s.signedOff ? `<span style="font-size: 10px; color: #90A4AE;"> - signed off by ${escapeHtml(s.signedOffBy)}</span>` : ''}
+              </li>
+            `).join('')}
+          </ul>
+        `;
+      } catch (e) {}
+    }
+
+    async function submitFtoSignoff(e) {
+      e.preventDefault();
+      const form = document.getElementById('ftoSignoffForm');
+      const statusDiv = document.getElementById('ftoSignoffStatus');
+      statusDiv.style.color = '#546675';
+      statusDiv.innerText = 'Submitting...';
+      try {
+        const res = await fetch('/api/fto/signoff', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ assignmentId: form.assignmentId.value.trim(), stageName: form.stageName.value, notes: form.notes.value })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          statusDiv.style.color = 'green';
+          statusDiv.innerText = data.completed ? 'Stage signed off - FTO program completed!' : 'Stage signed off.';
+          form.reset();
+          loadMyFtoProgress();
+        } else {
+          statusDiv.style.color = '#9E2A2B';
+          statusDiv.innerText = 'Error: ' + (data.error || 'Failed to sign off.');
+        }
+      } catch (e) {
+        statusDiv.style.color = '#9E2A2B';
+        statusDiv.innerText = 'Network error signing off.';
+      }
+    }
+
+    async function loadMyStats() {
+      const body = document.getElementById('myStatsBody');
+      try {
+        const res = await fetch('/api/officer/stats');
+        const data = await res.json();
+        if (!res.ok) {
+          body.innerHTML = `<p style="font-size: 11px; color: #9E2A2B;">${escapeHtml(data.error || 'Failed to load stats.')}</p>`;
+          return;
+        }
+        body.innerHTML = `
+          <p style="margin: 0 0 6px;"><strong>Lifetime Duty Logged:</strong> <span style="font-family: monospace;">${escapeHtml(data.lifetimeFormatted)}</span></p>
+          <p style="margin: 0 0 6px;"><strong>Incidents Filed:</strong> ${data.incidentsFiled}</p>
+          <p style="margin: 0 0 6px;"><strong>Commendations Received:</strong> ${data.commendationsReceived}
+            <span style="font-size: 9.5px; color: #90A4AE;">(best-effort match by name - not guaranteed exact)</span>
+          </p>
+        `;
+      } catch (e) {
+        body.innerHTML = '<p style="font-size: 11px; color: #9E2A2B;">Network error loading stats.</p>';
+      }
+    }
+
+    // ==================================================
+    // Push Notifications (quota-compliance reminders)
+    // ==================================================
+    function urlBase64ToUint8Array(base64String) {
+      const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+      const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+      const rawData = window.atob(base64);
+      const outputArray = new Uint8Array(rawData.length);
+      for (let i = 0; i < rawData.length; i++) outputArray[i] = rawData.charCodeAt(i);
+      return outputArray;
+    }
+
+    async function refreshPushUI() {
+      const line = document.getElementById('pushStatusLine');
+      const enableBtn = document.getElementById('pushEnableBtn');
+      const disableBtn = document.getElementById('pushDisableBtn');
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        line.innerText = 'Not supported in this browser.';
+        line.style.color = '#546675';
+        return;
+      }
+      if (Notification.permission === 'denied') {
+        line.innerText = 'Notifications are blocked for this site in your browser settings.';
+        line.style.color = '#9E2A2B';
+        return;
+      }
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          line.innerText = 'Notifications are enabled on this device.';
+          line.style.color = '#1B5E20';
+          enableBtn.style.display = 'none';
+          disableBtn.style.display = 'inline-block';
+        } else {
+          line.innerText = 'Notifications are off on this device.';
+          line.style.color = '#546675';
+          enableBtn.style.display = 'inline-block';
+          disableBtn.style.display = 'none';
+        }
+      } catch (e) {
+        line.innerText = 'Could not check notification status.';
+        line.style.color = '#9E2A2B';
+      }
+    }
+
+    async function enablePushNotifications() {
+      const line = document.getElementById('pushStatusLine');
+      try {
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') {
+          line.innerText = 'Permission was not granted.';
+          line.style.color = '#9E2A2B';
+          return;
+        }
+        const keyRes = await fetch('/api/push/vapid-public-key');
+        const keyData = await keyRes.json();
+        if (!keyRes.ok) {
+          line.innerText = keyData.error || 'Push is not configured on this server.';
+          line.style.color = '#9E2A2B';
+          return;
+        }
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(keyData.publicKey)
+        });
+        await fetch('/api/push/subscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(sub.toJSON())
+        });
+        playClickSound();
+        refreshPushUI();
+      } catch (e) {
+        line.innerText = 'Failed to enable notifications.';
+        line.style.color = '#9E2A2B';
+      }
+    }
+
+    async function disablePushNotifications() {
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          await fetch('/api/push/unsubscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ endpoint: sub.endpoint })
+          });
+          await sub.unsubscribe();
+        }
+        playClickSound();
+        refreshPushUI();
+      } catch (e) {}
+    }
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
+
+    // ==================================================
+    // Audio Feedback (Web Audio API - synthesized, no files)
+    // ==================================================
+    let audioCtx = null;
+    function getAudioCtx() {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      return audioCtx;
+    }
+
+    function isAudioFeedbackEnabled() {
+      try { return localStorage.getItem('wp-audio-feedback') === 'on'; } catch (e) { return false; }
+    }
+
+    function setAudioFeedbackEnabled(enabled) {
+      try { localStorage.setItem('wp-audio-feedback', enabled ? 'on' : 'off'); } catch (e) {}
+      if (enabled) playClickSound();
+    }
+
+    // A short, dry mechanical click - two fast clustered clicks through a highpass filter.
+    function playClickSound() {
+      if (!isAudioFeedbackEnabled()) return;
+      try {
+        const ctx = getAudioCtx();
+        const now = ctx.currentTime;
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'highpass';
+        filter.frequency.value = 1200;
+        filter.connect(ctx.destination);
+        [0, 0.018].forEach((offset) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'square';
+          osc.frequency.value = 2400;
+          gain.gain.setValueAtTime(0.05, now + offset);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.02);
+          osc.connect(gain);
+          gain.connect(filter);
+          osc.start(now + offset);
+          osc.stop(now + offset + 0.02);
+        });
+      } catch (e) {}
+    }
+
+    // A rising two-tone chime, like an old terminal powering on.
+    function playBootSound() {
+      if (!isAudioFeedbackEnabled()) return;
+      try {
+        const ctx = getAudioCtx();
+        const now = ctx.currentTime;
+        [220, 440].forEach((freq, i) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = freq;
+          const start = now + i * 0.09;
+          gain.gain.setValueAtTime(0.0001, start);
+          gain.gain.exponentialRampToValueAtTime(0.06, start + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.16);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(start);
+          osc.stop(start + 0.18);
+        });
+      } catch (e) {}
+    }
+
+    // Soft filtered noise burst - a radio squelch tail, not a full static blast.
+    function playSquelchSound() {
+      if (!isAudioFeedbackEnabled()) return;
+      try {
+        const ctx = getAudioCtx();
+        const bufferSize = ctx.sampleRate * 0.25;
+        const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / bufferSize);
+        const noise = ctx.createBufferSource();
+        noise.buffer = buffer;
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.value = 1800;
+        filter.Q.value = 0.7;
+        const gain = ctx.createGain();
+        gain.gain.value = 0.08;
+        noise.connect(filter);
+        filter.connect(gain);
+        gain.connect(ctx.destination);
+        noise.start();
+      } catch (e) {}
+    }
+
+    // Delegate: any button/link click anywhere on the dashboard gets a soft
+    // click sound, rather than instrumenting every handler individually.
+    document.addEventListener('click', (e) => {
+      const target = e.target.closest('button, a.period-button, a.more-link');
+      if (target) playClickSound();
+    });
+
+    // ==================================================
+    // Customizable Dashboard Widgets (Field Station cards)
+    // ==================================================
+    function getFieldStationWidgets() {
+      return Array.from(document.querySelectorAll('#tab-field > .feature-grid > .content-box'));
+    }
+
+    function getHiddenWidgetIds() {
+      try { return JSON.parse(localStorage.getItem('wp-hidden-widgets') || '[]'); } catch (e) { return []; }
+    }
+
+    function setHiddenWidgetIds(ids) {
+      try { localStorage.setItem('wp-hidden-widgets', JSON.stringify(ids)); } catch (e) {}
+    }
+
+    function widgetLabel(box) {
+      const heading = box.querySelector('h2');
+      return heading ? heading.innerText.trim() : 'Untitled Card';
+    }
+
+    function applyWidgetVisibility() {
+      const hidden = getHiddenWidgetIds();
+      getFieldStationWidgets().forEach((box, i) => {
+        if (!box.dataset.widgetId) box.dataset.widgetId = 'widget-' + i;
+        box.style.display = hidden.includes(box.dataset.widgetId) ? 'none' : '';
+      });
+      renderWidgetVisibilityList();
+    }
+
+    function renderWidgetVisibilityList() {
+      const container = document.getElementById('widgetVisibilityList');
+      if (!container) return;
+      const hidden = getHiddenWidgetIds();
+      container.innerHTML = getFieldStationWidgets().map((box) => {
+        const id = box.dataset.widgetId;
+        const checked = !hidden.includes(id);
+        return `<label style="display: flex; align-items: center; gap: 8px; font-size: 12px; cursor: pointer;">
+          <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleWidgetVisibility('${id}', this.checked)" />
+          ${escapeHtml(widgetLabel(box))}
+        </label>`;
+      }).join('') || '<p style="font-size: 11px; color: #546675;">No cards found on Field Station.</p>';
+    }
+
+    function toggleWidgetVisibility(widgetId, visible) {
+      let hidden = getHiddenWidgetIds();
+      if (visible) hidden = hidden.filter((id) => id !== widgetId);
+      else if (!hidden.includes(widgetId)) hidden.push(widgetId);
+      setHiddenWidgetIds(hidden);
+      applyWidgetVisibility();
+    }
+
+    // Drag-to-reorder for Field Station cards - order persisted by widget id.
+    function getWidgetOrder() {
+      try { return JSON.parse(localStorage.getItem('wp-widget-order') || '[]'); } catch (e) { return []; }
+    }
+
+    function applyWidgetOrder() {
+      const order = getWidgetOrder();
+      if (!order.length) return;
+      const grid = document.querySelector('#tab-field > .feature-grid');
+      if (!grid) return;
+      const boxes = getFieldStationWidgets();
+      const byId = new Map(boxes.map((b) => [b.dataset.widgetId, b]));
+      order.forEach((id) => {
+        const box = byId.get(id);
+        if (box) grid.appendChild(box);
+      });
+    }
+
+    function enableWidgetDragging() {
+      getFieldStationWidgets().forEach((box) => {
+        box.setAttribute('draggable', 'true');
+        box.addEventListener('dragstart', (e) => {
+          e.dataTransfer.setData('text/plain', box.dataset.widgetId);
+          box.style.opacity = '0.5';
+        });
+        box.addEventListener('dragend', () => { box.style.opacity = ''; });
+        box.addEventListener('dragover', (e) => e.preventDefault());
+        box.addEventListener('drop', (e) => {
+          e.preventDefault();
+          const draggedId = e.dataTransfer.getData('text/plain');
+          const grid = box.parentElement;
+          const dragged = grid.querySelector(`[data-widget-id="${draggedId}"]`);
+          if (dragged && dragged !== box) {
+            grid.insertBefore(dragged, box);
+            setWidgetOrder(getFieldStationWidgets().map((b) => b.dataset.widgetId));
+          }
+        });
+      });
+    }
+
+    function setWidgetOrder(order) {
+      try { localStorage.setItem('wp-widget-order', JSON.stringify(order)); } catch (e) {}
+    }
+
+    function initDashboardWidgets() {
+      getFieldStationWidgets().forEach((box, i) => { if (!box.dataset.widgetId) box.dataset.widgetId = 'widget-' + i; });
+      applyWidgetOrder();
+      applyWidgetVisibility();
+      enableWidgetDragging();
+    }
+
+    // ==================================================
+    // Command Terminal Mode (Ctrl+K / ~)
+    // ==================================================
+    function ensureCommandPalette() {
+      let overlay = document.getElementById('cmdPaletteOverlay');
+      if (overlay) return overlay;
+      overlay = document.createElement('div');
+      overlay.id = 'cmdPaletteOverlay';
+      overlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(10,14,18,0.55); z-index:500; align-items:flex-start; justify-content:center; padding-top:12vh;';
+      overlay.innerHTML = `
+        <div style="width:min(560px, 92vw); background:#1E252D; border:1px solid #485A6A; border-radius:6px; box-shadow:0 10px 40px rgba(0,0,0,0.5); overflow:hidden;">
+          <input id="cmdPaletteInput" type="text" placeholder="Type a command: /lookup [name], /duty on, /duty off, /case [id], or a tab name..."
+            style="width:100%; box-sizing:border-box; padding:14px 16px; font-size:14px; font-family:monospace; border:none; outline:none; background:#12161A; color:#E2E6EA;" />
+          <div id="cmdPaletteResults" style="max-height:320px; overflow-y:auto;"></div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) closeCommandPalette(); });
+      overlay.querySelector('#cmdPaletteInput').addEventListener('input', (e) => renderCommandPaletteResults(e.target.value));
+      overlay.querySelector('#cmdPaletteInput').addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeCommandPalette();
+        if (e.key === 'Enter') {
+          const first = overlay.querySelector('#cmdPaletteResults [data-cmd-action]');
+          if (first) first.click();
+        }
+      });
+      return overlay;
+    }
+
+    const COMMAND_PALETTE_TABS = [
+      { key: 'field', label: 'Field Station' },
+      { key: 'roster', label: 'Live Duty Roster' },
+      { key: 'incidents', label: 'Incident Archive' },
+      { key: 'ia', label: 'Internal Affairs Desk' },
+      { key: 'staff-directory', label: 'Staff Directory' },
+      { key: 'command', label: 'Command Center' },
+      { key: 'settings', label: 'Settings' }
+    ];
+
+    function renderCommandPaletteResults(query) {
+      const container = document.getElementById('cmdPaletteResults');
+      const trimmed = query.trim();
+      let items = [];
+
+      if (trimmed.toLowerCase().startsWith('/lookup ')) {
+        const term = trimmed.slice(8).trim();
+        items.push({ label: `Search Staff Directory for "${term}"`, action: () => { switchTab('staff-directory'); setTimeout(() => { const input = document.getElementById('staffDirectorySearchInput'); if (input) { input.value = term; input.dispatchEvent(new Event('input')); } }, 50); } });
+      } else if (/^\/duty\s+(on|off)/i.test(trimmed)) {
+        const wantOn = /on/i.test(trimmed);
+        items.push({ label: `Set duty status: ${wantOn ? 'ON DUTY' : 'OFF DUTY'}`, action: () => { switchTab('field'); toggleShift(wantOn); } });
+      } else if (trimmed.toLowerCase().startsWith('/case ')) {
+        const term = trimmed.slice(6).trim();
+        items.push({ label: `Look up case "${term}" in Incident Archive`, action: () => { switchTab('incidents'); setTimeout(() => { const input = document.getElementById('incidentsSearchInput'); if (input) { input.value = term; input.dispatchEvent(new Event('input')); } }, 50); } });
+      } else {
+        const q = trimmed.toLowerCase();
+        items = COMMAND_PALETTE_TABS
+          .filter((t) => !q || t.label.toLowerCase().includes(q) || t.key.includes(q))
+          .map((t) => ({ label: 'Go to ' + t.label, action: () => switchTab(t.key) }));
+      }
+
+      if (!items.length) {
+        container.innerHTML = '<div style="padding:14px 16px; font-size:12px; color:#A0AEB8;">No matches. Try /lookup, /duty on, /duty off, /case, or a tab name.</div>';
+        return;
+      }
+
+      container.innerHTML = items.map((item, i) => `
+        <div data-cmd-action="${i}" style="padding:12px 16px; font-size:13px; color:#E2E6EA; cursor:pointer; border-top:1px solid #2A333C;">${escapeHtml(item.label)}</div>
+      `).join('');
+      Array.from(container.children).forEach((el, i) => {
+        el.addEventListener('mouseenter', () => { el.style.background = '#2A333C'; });
+        el.addEventListener('mouseleave', () => { el.style.background = ''; });
+        el.addEventListener('click', () => { items[i].action(); closeCommandPalette(); });
+      });
+    }
+
+    function openCommandPalette() {
+      const overlay = ensureCommandPalette();
+      overlay.style.display = 'flex';
+      playBootSound();
+      const input = overlay.querySelector('#cmdPaletteInput');
+      input.value = '';
+      renderCommandPaletteResults('');
+      setTimeout(() => input.focus(), 0);
+    }
+
+    function closeCommandPalette() {
+      const overlay = document.getElementById('cmdPaletteOverlay');
+      if (overlay) overlay.style.display = 'none';
+    }
+
+    document.addEventListener('keydown', (e) => {
+      const tag = (e.target.tagName || '').toLowerCase();
+      const typing = tag === 'input' || tag === 'textarea' || e.target.isContentEditable;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        openCommandPalette();
+      } else if (e.key === '~' && !typing) {
+        e.preventDefault();
+        openCommandPalette();
+      } else if (e.key === 'Escape') {
+        closeCommandPalette();
+      }
+    });
+
     // Startup
     loadOfficerSession();
     checkDutyStatus();
     updateActionFields();
     refreshBodycamStorageStatus();
+    loadMyStats();
+    loadMyFtoProgress();
+    loadFtoStageOptions();
+    initDashboardWidgets();
+    (function initSettingsToggles() {
+      const audioToggle = document.getElementById('audioFeedbackToggle');
+      if (audioToggle) audioToggle.checked = isAudioFeedbackEnabled();
+    })();
   </script>
 </body>
 </html>
