@@ -50,13 +50,33 @@ const DISCORD_BOT_TOKEN = process.env.DISCORD_TOKEN;
 const DISCORD_CLIENT_ID = process.env.CLIENT_ID || '1540023346794856540';
 const DISCORD_CLIENT_SECRET = process.env.CLIENT_SECRET;
 const GUILD_ID = process.env.GUILD_ID || '1522793078199419022';
-const DEPT_LOGS_CHANNEL_ID = process.env.DEPARTMENT_LOGS_CHANNEL_ID || '1542980017472929944';
-const AUDIT_LOGS_CHANNEL_ID = process.env.AUDIT_LOGS_CHANNEL_ID || '1540024507761164348';
+// These four are `let`, not `const`: the Admin Channel Config panel
+// (GET/POST /api/admin/channels) overwrites them in-memory and persists the
+// change to channel-config.json, so an edit there applies immediately with
+// no redeploy - same "seed from env, override from a saved JSON file" idea
+// as role-permissions.json, just without needing every call site to go
+// through a getter function since these were already plain top-level
+// constants referenced directly throughout the file.
+let DEPT_LOGS_CHANNEL_ID = process.env.DEPARTMENT_LOGS_CHANNEL_ID || '1542980017472929944';
+let AUDIT_LOGS_CHANNEL_ID = process.env.AUDIT_LOGS_CHANNEL_ID || '1540024507761164348';
 // Bodycam video logs post to a *different* server than the main guild (per-
 // officer channels get created under this one, next to the "video logs"
 // channel/category originally given).
-const VIDEO_LOG_GUILD_ID = process.env.VIDEO_LOG_GUILD_ID || '1540023207082463272';
-const VIDEO_LOG_PARENT_ID = process.env.VIDEO_LOG_PARENT_ID || '1545537864677331105';
+let VIDEO_LOG_GUILD_ID = process.env.VIDEO_LOG_GUILD_ID || '1540023207082463272';
+let VIDEO_LOG_PARENT_ID = process.env.VIDEO_LOG_PARENT_ID || '1545537864677331105';
+
+// Applied once at startup, right after loadEnv() below - overwrites the
+// `let` defaults above with anything Command has saved via the Admin
+// Channel Config panel.
+function loadChannelConfigOverrides() {
+  const saved = readJSONFile('channel-config.json', null);
+  if (!saved) return;
+  if (saved.deptLogsChannelId) DEPT_LOGS_CHANNEL_ID = saved.deptLogsChannelId;
+  if (saved.auditLogsChannelId) AUDIT_LOGS_CHANNEL_ID = saved.auditLogsChannelId;
+  if (saved.videoLogGuildId) VIDEO_LOG_GUILD_ID = saved.videoLogGuildId;
+  if (saved.videoLogParentId) VIDEO_LOG_PARENT_ID = saved.videoLogParentId;
+}
+loadChannelConfigOverrides();
 
 // Discord validates redirect_uri against exactly what's registered in the app's
 // developer portal, so it must match the domain the request actually arrived
@@ -1455,10 +1475,23 @@ const server = http.createServer(async (req, res) => {
     if (!target) return sendJSON(res, 404, { error: 'Report not found' });
 
     const previousStatus = target.status;
+    const previousFindings = target.findings;
     target.status = body.status || target.status;
     target.findings = body.findings !== undefined ? body.findings : target.findings;
     target.assignedIA = currentSession.displayName;
     target.updatedAt = new Date().toISOString();
+
+    // Case-history log: who changed what, when - separate from
+    // assignedIA/updatedAt, which only ever reflect the LAST change.
+    if (!Array.isArray(target.history)) target.history = [];
+    target.history.push({
+      by: currentSession.displayName,
+      at: target.updatedAt,
+      statusFrom: previousStatus,
+      statusTo: target.status,
+      findingsChanged: target.findings !== previousFindings
+    });
+    if (target.history.length > 50) target.history = target.history.slice(-50);
 
     writeJSONFile('reports.json', reports);
 
@@ -1581,6 +1614,64 @@ const server = http.createServer(async (req, res) => {
     }
     const actions = readJSONFile('actions.json', []);
     return sendJSON(res, 200, { actions });
+  }
+
+  // API: GET /api/admin/export/:kind.csv (Command Only - CSV export of
+  // actions, weekly quota standings, or citizen reports for spreadsheet use)
+  if (pathname.startsWith('/api/admin/export/') && pathname.endsWith('.csv') && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    const kind = pathname.slice('/api/admin/export/'.length, -'.csv'.length);
+    let rows = [];
+    let columns = [];
+
+    if (kind === 'actions') {
+      columns = ['id', 'type', 'targetUser', 'targetUserId', 'roleRank', 'context', 'notes', 'executor', 'timestamp'];
+      rows = readJSONFile('actions.json', []);
+    } else if (kind === 'reports') {
+      columns = ['id', 'type', 'citizen', 'officer', 'location', 'status', 'assignedIA', 'findings', 'timestamp'];
+      rows = readJSONFile('reports.json', []);
+    } else if (kind === 'quota') {
+      columns = ['userId', 'robloxUsername', 'totalSeconds', 'quotaTargetSeconds', 'quotaMet', 'weekKey'];
+      const db = getBotDb();
+      const weekKey = getWeekKey();
+      if (db) {
+        try {
+          rows = db.prepare(`
+            SELECT sh.user_id AS userId,
+                   COALESCE(s.roblox_username, sh.roblox_username) AS robloxUsername,
+                   COALESCE(wt.total_seconds, 0) AS totalSeconds,
+                   COALESCE(s.quota_target_seconds, 900) AS quotaTargetSeconds,
+                   ? AS weekKey
+            FROM (SELECT DISTINCT user_id, roblox_username FROM shift_history WHERE week_key = ?) sh
+            LEFT JOIN weekly_totals wt ON wt.user_id = sh.user_id AND wt.week_key = ?
+            LEFT JOIN staff_members s ON s.user_id = sh.user_id
+            ORDER BY totalSeconds DESC
+          `).all(weekKey, weekKey, weekKey);
+          rows.forEach(r => { r.quotaMet = r.totalSeconds >= r.quotaTargetSeconds; });
+        } catch (e) {
+          console.error('[CSV EXPORT ERROR]', e.message);
+        }
+      }
+    } else {
+      return sendJSON(res, 404, { error: 'Unknown export type. Use actions, reports, or quota.' });
+    }
+
+    const escapeCsvField = (val) => {
+      const str = val === null || val === undefined ? '' : String(val);
+      return /[",\n]/.test(str) ? '"' + str.replace(/"/g, '""') + '"' : str;
+    };
+    const csvLines = [columns.join(',')];
+    rows.forEach(row => csvLines.push(columns.map(col => escapeCsvField(row[col])).join(',')));
+    const csv = csvLines.join('\n');
+
+    res.writeHead(200, {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="westpoint-${kind}-${getWeekKey()}.csv"`,
+      ...SECURITY_HEADERS
+    });
+    return res.end(csv);
   }
 
   // API: GET /api/public/patrol-count (Public - live "X officers on patrol"
@@ -1733,6 +1824,46 @@ const server = http.createServer(async (req, res) => {
     roleConfigCache = config;
     roleConfigUpdatedAt = Date.now();
     return sendJSON(res, 200, { success: true, roleCount: Object.keys(config).length });
+  }
+
+  // API: GET /api/admin/channels (Command Only - current channel/guild IDs,
+  // whether each is a saved override or still the env/hardcoded default)
+  if (pathname === '/api/admin/channels' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    return sendJSON(res, 200, {
+      channels: {
+        deptLogsChannelId: DEPT_LOGS_CHANNEL_ID,
+        auditLogsChannelId: AUDIT_LOGS_CHANNEL_ID,
+        videoLogGuildId: VIDEO_LOG_GUILD_ID,
+        videoLogParentId: VIDEO_LOG_PARENT_ID
+      }
+    });
+  }
+
+  // API: POST /api/admin/channels (Command Only - save + apply immediately,
+  // no redeploy needed. Only updates this process's in-memory values - the
+  // bot process has its own copy of DEPARTMENT_LOGS_CHANNEL_ID/
+  // AUDIT_LOGS_CHANNEL_ID in bot/src/config.js, unaffected by this panel.)
+  if (pathname === '/api/admin/channels' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    const body = await parseBody(req);
+    const clean = (val) => String(val || '').trim().replace(/[^0-9]/g, '').slice(0, 32);
+    const next = {
+      deptLogsChannelId: clean(body.deptLogsChannelId) || DEPT_LOGS_CHANNEL_ID,
+      auditLogsChannelId: clean(body.auditLogsChannelId) || AUDIT_LOGS_CHANNEL_ID,
+      videoLogGuildId: clean(body.videoLogGuildId) || VIDEO_LOG_GUILD_ID,
+      videoLogParentId: clean(body.videoLogParentId) || VIDEO_LOG_PARENT_ID
+    };
+    writeJSONFile('channel-config.json', next);
+    DEPT_LOGS_CHANNEL_ID = next.deptLogsChannelId;
+    AUDIT_LOGS_CHANNEL_ID = next.auditLogsChannelId;
+    VIDEO_LOG_GUILD_ID = next.videoLogGuildId;
+    VIDEO_LOG_PARENT_ID = next.videoLogParentId;
+    return sendJSON(res, 200, { success: true, channels: next });
   }
 
   // API: GET /api/duty/status (Check current officer active session in bot.db)
