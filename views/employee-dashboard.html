@@ -1005,7 +1005,24 @@
     }
 
     // Switch Tabs
+    // Tab-level permission gate - mirrors exactly which tab BUTTONS get
+    // revealed in loadOfficerSession(). Tab buttons being hidden was only a
+    // UI affordance; switchTab() itself had no check, so anything that could
+    // call it directly (the console, or the Ctrl+K command palette's generic
+    // "Go to X" entries) could open a restricted tab's content regardless of
+    // role. The server still rejects the actual data/actions inside it
+    // (401/403), but the tab's structure and forms shouldn't be shown at all
+    // to someone who can't use them.
+    function isTabAllowed(tabKey) {
+      const perms = window.currentPermissions || {};
+      if (tabKey === 'ia') return !!(perms.isCommand || perms.isInternalAffairs);
+      if (tabKey === 'command') return !!perms.isCommand;
+      if (tabKey === 'review-queue') return !!perms.isSupervisor;
+      return true; // field, roster, incidents, staff-directory, settings - open to any officer
+    }
+
     function switchTab(tabKey) {
+      if (!isTabAllowed(tabKey)) return;
       document.querySelectorAll('.dash-tab-btn').forEach(btn => btn.classList.remove('is-active'));
       document.querySelectorAll('.dash-section').forEach(sec => sec.classList.remove('is-active'));
 
@@ -3341,6 +3358,7 @@
       { key: 'ia', label: 'Internal Affairs Desk' },
       { key: 'staff-directory', label: 'Staff Directory' },
       { key: 'command', label: 'Command Center' },
+      { key: 'review-queue', label: 'Review Queue' },
       { key: 'settings', label: 'Settings' }
     ];
 
@@ -3361,6 +3379,7 @@
       } else {
         const q = trimmed.toLowerCase();
         items = COMMAND_PALETTE_TABS
+          .filter((t) => isTabAllowed(t.key))
           .filter((t) => !q || t.label.toLowerCase().includes(q) || t.key.includes(q))
           .map((t) => ({ label: 'Go to ' + t.label, action: () => switchTab(t.key) }));
       }
