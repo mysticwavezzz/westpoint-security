@@ -35,6 +35,14 @@ function loadEnv() {
     for (const line of lines) {
       const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
       if (match) {
+        // A real environment variable (Railway's own config, or a test
+        // harness overriding PORT to run an isolated instance) always wins
+        // over the checked-in .env file's default - matches standard
+        // dotenv-style precedence. Discovered this was backwards while
+        // writing test/smoke.test.js: spawning the server with an
+        // overridden PORT still came up on .env's PORT=8080 every time,
+        // silently clobbering the override.
+        if (Object.prototype.hasOwnProperty.call(process.env, match[1])) continue;
         let value = (match[2] || '').trim();
         if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
         if (value.startsWith("'") && value.endsWith("'")) value = value.slice(1, -1);
@@ -1055,6 +1063,29 @@ const server = http.createServer(async (req, res) => {
     if (currentSession) {
       currentSession = await revalidateSession(sessionId, currentSession);
     }
+
+  // API: GET /api/health (Public - wired to Railway's Healthcheck Path).
+  // Deliberately cheap and unauthenticated: no Discord API calls, just
+  // local process/DB state, so it can't itself become a source of failed
+  // deploys under Discord rate limits.
+  if (pathname === '/api/health' && req.method === 'GET') {
+    const db = getBotDb();
+    let dbOk = false;
+    if (db) {
+      try {
+        db.prepare('SELECT 1').get();
+        dbOk = true;
+      } catch (e) {}
+    }
+    return sendJSON(res, 200, {
+      status: 'ok',
+      uptimeSeconds: Math.round(process.uptime()),
+      database: dbOk,
+      r2Configured: r2.isConfigured(),
+      discordTokenConfigured: !!DISCORD_BOT_TOKEN,
+      timestamp: new Date().toISOString()
+    });
+  }
 
   // 1. DISCORD OAUTH2 REDIRECT
   if (pathname === '/auth/discord') {

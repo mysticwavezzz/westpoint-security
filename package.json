@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node start.js",
-    "start:bot": "node bot/src/index.js"
+    "start:bot": "node bot/src/index.js",
+    "test": "node --test"
   },
   "license": "ISC",
   "dependencies": {
