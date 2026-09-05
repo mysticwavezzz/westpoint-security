@@ -102,101 +102,114 @@
           </div>
         </section>
 
-        <!-- Authenticated Communication Portal -->
-        <div id="contactPortalContainer" style="display: none;">
-          <!-- User Status Banner -->
-          <div style="background: #ECEFF1; border: 1px solid #CFD8DC; padding: 8px 14px; margin-bottom: 14px; font-size: 11.5px; display: flex; justify-content: space-between; align-items: center;">
-            <div>
-              <strong>Verified Identity:</strong> <span id="authUserNameDisplay" style="color: #9E2A2B; font-weight: bold;">Loading...</span>
+          <!-- Authenticated Communication Portal -->
+          <div id="contactPortalContainer" style="display: none;">
+            <!-- User Status Banner -->
+            <div style="background: #ECEFF1; border: 1px solid #CFD8DC; padding: 10px 14px; margin-bottom: 14px; font-size: 11.5px; display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <div><strong>Verified Discord Identity:</strong> <span id="authUserNameDisplay" style="color: #9E2A2B; font-weight: bold;">Loading...</span></div>
+                <div style="margin-top: 3px;"><strong>Linked Roblox Account:</strong> <span id="authRobloxDisplay" style="color: #2b5b84; font-weight: bold;">Resolving...</span></div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <span class="status-pill status-pill-green">VERIFIED AUTH</span>
+                <button type="button" class="period-button period-button-secondary" style="font-size: 9.5px; padding: 2px 8px; cursor: pointer;" onclick="handleContactSignOut()">[ Sign Out ]</button>
+              </div>
             </div>
-            <div style="display: flex; gap: 8px; align-items: center;">
-              <span class="status-pill status-pill-green">AUTHENTICATED</span>
-              <button type="button" class="period-button period-button-secondary" style="font-size: 9.5px; padding: 2px 8px; cursor: pointer;" onclick="handleContactSignOut()">[ Sign Out ]</button>
+
+            <!-- Form Selection Tabs -->
+            <div class="dash-nav-bar" style="margin-bottom: 14px;">
+              <button type="button" class="dash-tab-btn is-active" id="tabBtnGeneral" onclick="switchContactTab('general')">1. General Contact &amp; Staff Inquiries</button>
+              <button type="button" class="dash-tab-btn" id="tabBtnMisconduct" onclick="switchContactTab('misconduct')">2. Report Misconduct / Commendations</button>
             </div>
+
+            <!-- TAB 1: General Contact Form -->
+            <section class="content-box content-box-notice" id="tabGeneralForm">
+              <h2>Reach Out to Staff</h2>
+              <div class="content-box-body">
+                <p style="margin: 0 0 14px; font-size: 11.5px; color: #4A5B69;">
+                  Use this official communication form to direct questions, service contract inquiries, or general notices to Westpoint Security leadership and staff. Your verified credentials are automatically locked to your submission.
+                </p>
+
+                <form class="period-form" id="staffContactForm" onsubmit="handleStaffContact(event)">
+                  <fieldset>
+                    <legend>Inquiry Details</legend>
+                    <label>Verified Discord Account (Locked):
+                      <input type="text" id="generalContactDiscord" readonly style="background-color: #E2E8F0; color: #334155; cursor: not-allowed;" />
+                    </label>
+                    <label>Linked Roblox User (Locked):
+                      <input type="text" id="generalContactRoblox" readonly style="background-color: #E2E8F0; color: #334155; cursor: not-allowed;" />
+                    </label>
+                    <label>Your Full Name / Organization (Optional):
+                      <input type="text" name="senderName" placeholder="e.g. Harrison County Business Association or Organization" />
+                    </label>
+                    <label>Subject / Topic:
+                      <select name="inquiryCategory" required>
+                        <option value="General Inquiry">General Staff Inquiry</option>
+                        <option value="Event Security Contract">Event Security Coverage Request</option>
+                        <option value="Private Property Contract">Private / Commercial Property Security</option>
+                        <option value="Administrative Question">Administrative / Command Question</option>
+                        <option value="Other">Other Notice</option>
+                      </select>
+                    </label>
+                    <label>Message / Details:
+                      <textarea name="messageContent" required placeholder="Provide full details regarding your inquiry or request..."></textarea>
+                    </label>
+                  </fieldset>
+                  <div style="margin-top: 10px;">
+                    <button type="submit" class="period-button" id="btnSubmitContact">[ TRANSMIT TO STAFF ]</button>
+                  </div>
+                  <div id="contactStatusMsg" style="margin-top: 10px; font-weight: bold; font-size: 11px;"></div>
+                </form>
+              </div>
+            </section>
+
+            <!-- TAB 2: Misconduct & Commendations Form -->
+            <section class="content-box content-box-notice" id="tabMisconductForm" style="display: none;">
+              <h2>Internal Affairs Incident &amp; Commendation Docket</h2>
+              <div class="content-box-body">
+                <p style="margin: 0 0 14px; font-size: 11.5px; color: #4A5B69;">
+                  Official docket for reporting officer misconduct or submitting officer commendations. Filings are routed directly to the Internal Affairs division and permanently bound to your verified identity.
+                </p>
+
+                <form class="period-form" id="reportForm" onsubmit="submitReport(event)">
+                  <fieldset>
+                    <legend>Reporting Party (Locked)</legend>
+                    <label>Filing Citizen Discord Account (Locked):
+                      <input type="text" id="reportCitizenDiscord" readonly style="background-color: #E2E8F0; color: #334155; cursor: not-allowed;" />
+                    </label>
+                    <label>Linked Roblox Username (Locked):
+                      <input type="text" id="reportCitizenRoblox" readonly style="background-color: #E2E8F0; color: #334155; cursor: not-allowed;" />
+                    </label>
+                  </fieldset>
+                  <fieldset style="margin-top: 12px;">
+                    <legend>Report Information</legend>
+                    <label>Submission Type:
+                      <select name="submissionType" required>
+                        <option value="Misconduct">Officer Misconduct</option>
+                        <option value="Commendation">Officer Commendation</option>
+                      </select>
+                    </label>
+                    <label>Reported Officer Name / Call-Sign:
+                      <input type="text" name="officerName" required placeholder="e.g. Officer John Doe, Unit 4" />
+                    </label>
+                    <label>Incident Location:
+                      <input type="text" name="location" required placeholder="e.g. Harrison County Plaza, Sector 4" />
+                    </label>
+                    <label>Incident Narrative &amp; Statement:
+                      <textarea name="narrative" required placeholder="Detail the events, actions observed, and any relevant times or context..."></textarea>
+                    </label>
+                    <label>Evidence (photos/screenshots, optional, up to 5 files, 4MB each):
+                      <input type="file" name="evidenceFiles" accept="image/*,.pdf" multiple />
+                    </label>
+                  </fieldset>
+                  <div style="margin-top: 10px;">
+                    <button type="submit" class="period-button" id="btnSubmitReport">[ SUBMIT TO INTERNAL AFFAIRS ]</button>
+                  </div>
+                  <div id="reportStatus" style="margin-top: 10px; font-weight: bold; font-size: 11px;"></div>
+                </form>
+              </div>
+            </section>
           </div>
-
-          <!-- Form Selection Tabs -->
-          <div class="dash-nav-bar" style="margin-bottom: 14px;">
-            <button type="button" class="dash-tab-btn is-active" id="tabBtnGeneral" onclick="switchContactTab('general')">1. General Contact &amp; Staff Inquiries</button>
-            <button type="button" class="dash-tab-btn" id="tabBtnMisconduct" onclick="switchContactTab('misconduct')">2. Report Misconduct / Commendations</button>
-          </div>
-
-          <!-- TAB 1: General Contact Form -->
-          <section class="content-box content-box-notice" id="tabGeneralForm">
-            <h2>Reach Out to Staff</h2>
-            <div class="content-box-body">
-              <p style="margin: 0 0 14px; font-size: 11.5px; color: #4A5B69;">
-                Use this official communication form to direct questions, service contract inquiries, or general notices to Westpoint Security leadership and staff.
-              </p>
-
-              <form class="period-form" id="staffContactForm" onsubmit="handleStaffContact(event)">
-                <fieldset>
-                  <legend>Inquiry Details</legend>
-                  <label>Your Name / Organization:
-                    <input type="text" name="senderName" required placeholder="e.g. John Doe, Harrison County Business Association" />
-                  </label>
-                  <label>Discord Username or Contact Handle:
-                    <input type="text" name="contactHandle" id="generalContactHandle" required placeholder="e.g. j_doe or email / Roblox username" />
-                  </label>
-                  <label>Subject / Topic:
-                    <select name="inquiryCategory" required>
-                      <option value="General Inquiry">General Staff Inquiry</option>
-                      <option value="Event Security Contract">Event Security Coverage Request</option>
-                      <option value="Private Property Contract">Private / Commercial Property Security</option>
-                      <option value="Administrative Question">Administrative / Command Question</option>
-                      <option value="Other">Other Notice</option>
-                    </select>
-                  </label>
-                  <label>Message / Details:
-                    <textarea name="messageContent" required placeholder="Provide full details regarding your inquiry or request..."></textarea>
-                  </label>
-                </fieldset>
-                <div style="margin-top: 10px;">
-                  <button type="submit" class="period-button" id="btnSubmitContact">[ TRANSMIT TO STAFF ]</button>
-                </div>
-                <div id="contactStatusMsg" style="margin-top: 10px; font-weight: bold; font-size: 11px;"></div>
-              </form>
-            </div>
-          </section>
-
-          <!-- TAB 2: Misconduct & Commendations Form -->
-          <section class="content-box content-box-notice" id="tabMisconductForm" style="display: none;">
-            <h2>Internal Affairs Incident &amp; Commendation Docket</h2>
-            <div class="content-box-body">
-              <p style="margin: 0 0 14px; font-size: 11.5px; color: #4A5B69;">
-                Official docket for reporting officer misconduct or submitting officer commendations. Filings are routed directly to the Internal Affairs division.
-              </p>
-
-              <form class="period-form" id="reportForm" onsubmit="submitReport(event)">
-                <fieldset>
-                  <legend>Report Information</legend>
-                  <label>Submission Type:
-                    <select name="submissionType" required>
-                      <option value="Misconduct">Officer Misconduct</option>
-                      <option value="Commendation">Officer Commendation</option>
-                    </select>
-                  </label>
-                  <label>Reported Officer Name / Call-Sign:
-                    <input type="text" name="officerName" required placeholder="e.g. Officer John Doe, Unit 4" />
-                  </label>
-                  <label>Incident Location:
-                    <input type="text" name="location" required placeholder="e.g. Harrison County Plaza, Sector 4" />
-                  </label>
-                  <label>Incident Narrative &amp; Statement:
-                    <textarea name="narrative" required placeholder="Detail the events, actions observed, and any relevant times or context..."></textarea>
-                  </label>
-                  <label>Evidence (photos/screenshots, optional, up to 5 files, 4MB each):
-                    <input type="file" name="evidenceFiles" accept="image/*,.pdf" multiple />
-                  </label>
-                </fieldset>
-                <div style="margin-top: 10px;">
-                  <button type="submit" class="period-button" id="btnSubmitReport">[ SUBMIT TO INTERNAL AFFAIRS ]</button>
-                </div>
-                <div id="reportStatus" style="margin-top: 10px; font-weight: bold; font-size: 11px;"></div>
-              </form>
-            </div>
-          </section>
-        </div>
       </article>
 
       <script>
@@ -286,12 +299,21 @@
           if (currentUser && currentUser.id) {
             document.getElementById('authGateNotice').style.display = 'none';
             document.getElementById('contactPortalContainer').style.display = 'block';
-            document.getElementById('authUserNameDisplay').innerText = (currentUser.displayName || currentUser.username) + ' (' + currentUser.username + ')';
+            const discordTag = currentUser.displayName ? `${currentUser.displayName} (@${currentUser.username})` : `@${currentUser.username}`;
+            const robloxUser = currentUser.robloxUsername ? `${currentUser.robloxUsername} (ID: ${currentUser.robloxId || 'Verified'})` : 'Not Detected / Unlinked';
+
+            document.getElementById('authUserNameDisplay').innerText = discordTag;
+            document.getElementById('authRobloxDisplay').innerText = robloxUser;
             
-            const handleInput = document.getElementById('generalContactHandle');
-            if (handleInput && !handleInput.value) {
-              handleInput.value = currentUser.username;
-            }
+            const generalDiscord = document.getElementById('generalContactDiscord');
+            const generalRoblox = document.getElementById('generalContactRoblox');
+            const reportDiscord = document.getElementById('reportCitizenDiscord');
+            const reportRoblox = document.getElementById('reportCitizenRoblox');
+
+            if (generalDiscord) generalDiscord.value = discordTag;
+            if (generalRoblox) generalRoblox.value = currentUser.robloxUsername || 'N/A';
+            if (reportDiscord) reportDiscord.value = discordTag;
+            if (reportRoblox) reportRoblox.value = currentUser.robloxUsername || 'N/A';
 
             // Check query param for default tab
             const urlParams = new URLSearchParams(window.location.search);
@@ -317,7 +339,6 @@
 
           const payload = {
             senderName: form.senderName.value.trim(),
-            contactHandle: form.contactHandle.value.trim(),
             category: form.inquiryCategory.value,
             message: form.messageContent.value.trim()
           };
@@ -334,7 +355,8 @@
             if (res.ok && data.success) {
               statusDiv.style.color = 'green';
               statusDiv.innerText = 'Message transmitted to staff successfully! Reference ID: ' + (data.id || 'MSG-SENT');
-              form.reset();
+              form.messageContent.value = '';
+              if (form.senderName) form.senderName.value = '';
             } else {
               statusDiv.style.color = '#9E2A2B';
               statusDiv.innerText = 'Error: ' + (data.error || 'Failed to transmit message.');
@@ -377,7 +399,10 @@
             if (res.ok && data.success) {
               statusDiv.style.color = 'green';
               statusDiv.innerText = 'Report Submitted Successfully! Case Reference: ' + (data.record?.id || 'DESK-RECORDED');
-              form.reset();
+              form.officerName.value = '';
+              form.location.value = '';
+              form.narrative.value = '';
+              form.evidenceFiles.value = '';
             } else {
               statusDiv.style.color = '#9E2A2B';
               statusDiv.innerText = 'Submission Failed: ' + (data.error || 'Authentication required.');

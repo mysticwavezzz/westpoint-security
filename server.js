@@ -1156,12 +1156,20 @@ const server = http.createServer(async (req, res) => {
                   // commendation.
                   const { permissions: perms, roles: matchingRanks, highestRank, quotaTargetSeconds } =
                     computePermissionsFromDiscordRoles(member ? (member.roles || []) : []);
+                  const candidateNames = [(member && member.nick), userObj.global_name, userObj.username].filter(Boolean);
+                  let robloxInfo = null;
+                  try {
+                    robloxInfo = await robloxService.resolveRobloxUser(candidateNames);
+                  } catch (e) {}
+
                   // Cryptographically strong 256-bit entropy session token
                   const newSessionId = 'WP-' + crypto.randomBytes(32).toString('hex');
                   SESSIONS.set(newSessionId, {
                     id: userObj.id,
                     username: userObj.username,
                     displayName: (member && member.nick) || userObj.global_name || userObj.username,
+                    robloxUsername: robloxInfo ? robloxInfo.name : null,
+                    robloxId: robloxInfo ? robloxInfo.id : null,
                     avatar: userObj.avatar ? `https://cdn.discordapp.com/avatars/${userObj.id}/${userObj.avatar}.png` : '/assets/logo.png',
                     roles: matchingRanks,
                     highestRank: highestRank,
@@ -1395,11 +1403,17 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 400, { error: 'Please provide statement details.' });
     }
 
+    const discordTag = currentSession.displayName ? `${currentSession.displayName} (@${currentSession.username})` : `@${currentSession.username}`;
+    const robloxName = currentSession.robloxUsername || 'Unlinked / N/A';
+
     const report = {
       id: 'DESK-' + Math.floor(100000 + Math.random() * 900000),
       type: body.type === 'Commendation' ? 'Commendation' : 'Misconduct',
-      citizen: String(currentSession.displayName || currentSession.username).slice(0, 100),
+      citizen: discordTag,
       reporterId: String(currentSession.id).slice(0, 32),
+      reporterDiscordUsername: currentSession.username,
+      reporterRobloxUsername: currentSession.robloxUsername || null,
+      reporterRobloxId: currentSession.robloxId || null,
       officer: String(body.officer || 'Unspecified').trim().slice(0, 100),
       location: String(body.location || 'Harrison County').trim().slice(0, 150),
       report: rawReport.slice(0, 4000),
@@ -1412,7 +1426,9 @@ const server = http.createServer(async (req, res) => {
 
     report.evidenceLink = await uploadEvidenceToDiscord(body.evidence, `Evidence: Case ${report.id}`, [
       { name: 'Type', value: report.type, inline: true },
-      { name: 'Reported Officer', value: report.officer, inline: true }
+      { name: 'Reported Officer', value: report.officer, inline: true },
+      { name: 'Filer Discord', value: `<@${currentSession.id}> (${currentSession.username})`, inline: true },
+      { name: 'Filer Roblox', value: robloxName, inline: true }
     ]);
 
     const reports = readJSONFile('reports.json', []);
@@ -1448,8 +1464,9 @@ const server = http.createServer(async (req, res) => {
       });
     }
     const body = await parseBody(req);
-    const senderName = String(body.senderName || 'Anonymous Citizen').trim().slice(0, 100);
-    const contactHandle = String(body.contactHandle || 'Unspecified').trim().slice(0, 100);
+    const customOrg = String(body.senderName || '').trim().slice(0, 100);
+    const discordTag = currentSession.displayName ? `${currentSession.displayName} (@${currentSession.username})` : `@${currentSession.username}`;
+    const robloxName = currentSession.robloxUsername || 'Unlinked / N/A';
     const category = String(body.category || 'General Staff Inquiry').trim().slice(0, 100);
     const message = String(body.message || '').trim().slice(0, 2500);
 
@@ -1459,8 +1476,12 @@ const server = http.createServer(async (req, res) => {
 
     const contactEntry = {
       id: 'MSG-' + Math.floor(100000 + Math.random() * 900000),
-      senderName,
-      contactHandle,
+      senderName: customOrg || discordTag,
+      discordUser: discordTag,
+      discordId: currentSession.id,
+      discordUsername: currentSession.username,
+      robloxUsername: currentSession.robloxUsername || null,
+      robloxId: currentSession.robloxId || null,
       category,
       message,
       timestamp: new Date().toISOString()
@@ -1473,10 +1494,11 @@ const server = http.createServer(async (req, res) => {
 
     // Send notification embed to Discord channel 1540024507761164348
     if (DISCORD_BOT_TOKEN) {
+      const fromField = customOrg ? `${customOrg} · <@${currentSession.id}> (\`${currentSession.username}\`)` : `<@${currentSession.id}> (\`${currentSession.username}\`)`;
       const discordEmbed = {
         title: `Citizen Inquiry: ${category}`,
         color: 0x3498DB,
-        description: `**From:** ${senderName} (\`${contactHandle}\`)\n**Topic:** ${category}\n\n**Message:**\n> ${message.replace(/>/g, '\\>')}`,
+        description: `**From:** ${fromField}\n**Roblox:** \`${robloxName}\`\n**Topic:** ${category}\n\n**Message:**\n> ${message.replace(/>/g, '\\>')}`,
         footer: { text: `Reference ID: ${contactEntry.id} · Westpoint Public Portal` },
         timestamp: contactEntry.timestamp
       };
