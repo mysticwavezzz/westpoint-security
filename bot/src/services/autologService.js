@@ -1,6 +1,7 @@
 const { EmbedBuilder } = require('discord.js');
 const db = require('./database');
 const config = require('../config');
+const incidentsService = require('./incidentsService');
 
 /**
  * Formats seconds into human-readable duration (e.g., "1h 25m 10s" or "15m 30s")
@@ -20,12 +21,42 @@ function formatDuration(totalSeconds) {
 }
 
 /**
+ * Sends the officer a personal DM "executive receipt" when their shift ends -
+ * duration, incidents filed during the shift, and quota progress. Best-
+ * effort: a DM failure (closed DMs, blocked bot) never blocks the shift end
+ * itself, so this is always wrapped by the caller in a way that can't throw.
+ */
+async function sendShiftEndSummaryCard(client, userId, { startTime, endTime, elapsedSeconds, weeklyTotalSeconds }) {
+  const user = await client.users.fetch(userId).catch(() => null);
+  if (!user) return;
+
+  const quotaTargetSeconds = db.getQuotaTargetSeconds(userId);
+  const incidentCount = incidentsService.getIncidentCountInRange(userId, startTime, endTime);
+  const quotaPercent = quotaTargetSeconds > 0 ? Math.min(999, Math.round((weeklyTotalSeconds / quotaTargetSeconds) * 100)) : 100;
+
+  const embed = new EmbedBuilder()
+    .setTitle('Shift End Summary')
+    .setColor(0x2ECC71)
+    .setDescription('Here\'s your executive receipt for the shift you just ended.')
+    .addFields(
+      { name: 'Shift Duration', value: formatDuration(elapsedSeconds), inline: true },
+      { name: 'Incidents Filed This Shift', value: String(incidentCount), inline: true },
+      { name: 'Weekly Quota Progress', value: `${formatDuration(weeklyTotalSeconds)} / ${formatDuration(quotaTargetSeconds)} (${quotaPercent}%)`, inline: false }
+    )
+    .setTimestamp()
+    .setFooter({ text: 'Westpoint Security · Autolog Tracking System' });
+
+  await user.send({ embeds: [embed] }).catch(() => {});
+}
+
+/**
  * Shared function to finalize and log an autolog session.
  * @param {object} client Discord Client
  * @param {string} userId Discord User ID
- * @param {boolean} isAutoEnded Whether ended automatically by background presence check
+ * @param {boolean} isAutoEnded Whether ended automatically (Roblox presence loss, voice channel leave, etc)
+ * @param {string|null} customReason Overrides the default "Ending Method" label - used by triggers other than the presence monitor (e.g. Voice Channel Shift Sync)
  */
-async function endAutologSession(client, userId, isAutoEnded = false) {
+async function endAutologSession(client, userId, isAutoEnded = false, customReason = null) {
   const session = db.getActiveSession(userId);
   if (!session) {
     return { success: false, reason: 'No active autolog session found.' };
@@ -68,7 +99,7 @@ async function endAutologSession(client, userId, isAutoEnded = false) {
           { name: 'Staff Member', value: userMention, inline: true },
           { name: 'Session Duration', value: formatDuration(elapsedSeconds), inline: true },
           { name: 'Weekly Total Logged', value: formatDuration(newWeeklyTotalSeconds), inline: true },
-          { name: 'Ending Method', value: isAutoEnded ? 'Automatic (Roblox Offline/Left Game)' : 'Manual Command (`/autolog end`)', inline: false }
+          { name: 'Ending Method', value: customReason || (isAutoEnded ? 'Automatic (Roblox Offline/Left Game)' : 'Manual Command (`/autolog end`)'), inline: false }
         )
         .setTimestamp()
         .setFooter({ text: 'Autolog Tracking System' });
@@ -78,6 +109,15 @@ async function endAutologSession(client, userId, isAutoEnded = false) {
   } catch (error) {
     console.error('[AUTOLOG ERROR] Failed to send Audit Log embed:', error.message);
   }
+
+  // Shift End Summary Card - best-effort personal DM, never blocks the
+  // shift-end response even if the user has DMs closed.
+  sendShiftEndSummaryCard(client, userId, {
+    startTime: session.start_time,
+    endTime: now,
+    elapsedSeconds,
+    weeklyTotalSeconds: newWeeklyTotalSeconds
+  }).catch(() => {});
 
   return {
     success: true,

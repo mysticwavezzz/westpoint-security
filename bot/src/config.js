@@ -27,5 +27,9 @@ module.exports = {
   roblox: {
     gameId: process.env.ROBLOX_GAME_ID || '10659924817',
     pollIntervalMs: parseInt(process.env.AUTOLOG_POLL_INTERVAL_MS, 10) || 60000
-  }
+  },
+  // Voice Channel Shift Sync is opt-in - no hardcoded fallback, since guessing
+  // wrong would silently auto-clock people in/out of the wrong voice channel.
+  // Feature stays off until this is set.
+  patrolCommsVoiceChannelId: process.env.PATROL_COMMS_VOICE_CHANNEL_ID || null
 };

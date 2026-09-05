@@ -50,6 +50,13 @@ db.exec(`
   );
 `);
 
+// The web portal's server.js adds this column via its own ALTER TABLE on
+// startup - guarded here too in case the bot process starts first against a
+// fresh volume before server.js has had a chance to run.
+try {
+  db.exec('ALTER TABLE staff_members ADD COLUMN quota_target_seconds INTEGER');
+} catch (e) {} // already exists
+
 /**
  * Returns the ISO week key (e.g. "2026-W34") for Monday-Sunday calculation
  */
@@ -109,6 +116,10 @@ const addWeeklyTimeStmt = db.prepare(`
 const hasWeeklyAuditRunStmt = db.prepare('SELECT 1 FROM weekly_audits WHERE week_key = ?');
 const recordWeeklyAuditStmt = db.prepare('INSERT OR REPLACE INTO weekly_audits (week_key, audited_at) VALUES (?, ?)');
 
+// Quota target queries - falls back to the app-wide 15-minute default,
+// matching server.js's own fallback for staff whose row predates this column.
+const getQuotaTargetStmt = db.prepare('SELECT quota_target_seconds FROM staff_members WHERE user_id = ?');
+
 // Action state queries
 const getActionStateStmt = db.prepare('SELECT * FROM user_action_states WHERE target_user_id = ?');
 const saveActionStateStmt = db.prepare(`
@@ -158,6 +169,10 @@ module.exports = {
   },
   addWeeklySeconds(userId, seconds, weekKey = getWeekKey()) {
     return addWeeklyTimeStmt.run(userId, weekKey, seconds);
+  },
+  getQuotaTargetSeconds(userId) {
+    const row = getQuotaTargetStmt.get(userId);
+    return (row && Number.isFinite(row.quota_target_seconds)) ? row.quota_target_seconds : 900;
   },
   hasWeeklyAuditRun(weekKey) {
     return !!hasWeeklyAuditRunStmt.get(weekKey);

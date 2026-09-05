@@ -6,11 +6,13 @@ const autologCommand = require('./commands/autolog');
 const debugCommand = require('./commands/debug');
 const readyEvent = require('./events/ready');
 const interactionCreateEvent = require('./events/interactionCreate');
+const voiceStateUpdateEvent = require('./events/voiceStateUpdate');
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildVoiceStates
   ]
 });
 
@@ -22,6 +24,7 @@ client.commands.set(debugCommand.data.name, debugCommand);
 // Register events
 client.once(readyEvent.name, (...args) => readyEvent.execute(...args));
 client.on(interactionCreateEvent.name, (...args) => interactionCreateEvent.execute(...args));
+client.on(voiceStateUpdateEvent.name, (...args) => voiceStateUpdateEvent.execute(...args));
 
 // Register client error handlers to prevent unhandled EventEmitter error crashes
 client.on('error', error => {

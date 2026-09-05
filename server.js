@@ -777,12 +777,14 @@ async function uploadEvidenceToDiscord(evidenceItems, embedTitle, embedFields) {
 // a citizen can only receive this if their DMs are open to server members,
 // which is out of this app's control; a failure here is logged but never
 // blocks the actual case update from saving.
-async function dmDiscordUser(userId, content) {
+async function dmDiscordUser(userId, content, embeds = null) {
   if (!DISCORD_BOT_TOKEN || !userId) return false;
   try {
     const rest = new DiscordREST({ version: '10' }).setToken(DISCORD_BOT_TOKEN);
     const dmChannel = await rest.post(DiscordRoutes.userChannels(), { body: { recipient_id: userId } });
-    await rest.post(DiscordRoutes.channelMessages(dmChannel.id), { body: { content } });
+    const body = { content };
+    if (embeds) body.embeds = embeds;
+    await rest.post(DiscordRoutes.channelMessages(dmChannel.id), { body });
     return true;
   } catch (e) {
     console.error('[DISCORD DM ERROR]', userId, e.message);
@@ -2816,6 +2818,30 @@ const server = http.createServer(async (req, res) => {
         footer: { text: 'Autolog Tracking System · Web Portal' }
       };
       postDiscordMessage(AUDIT_CHANNEL, embed).catch(() => {});
+
+      // Shift End Summary Card - same "executive receipt" DM the bot sends
+      // for /autolog end and Voice Channel Shift Sync, mirrored here since
+      // ending duty from the web dashboard is a separate code path (this
+      // process has no discord.js client, just the same bot token over
+      // raw REST via dmDiscordUser).
+      const incidentCount = readJSONFile('incidents.json', [])
+        .filter(i => i.officerId === currentSession.id && new Date(i.timestamp).getTime() >= session.start_time && new Date(i.timestamp).getTime() <= now)
+        .length;
+      const quotaTargetSeconds = currentSession.quotaTargetSeconds || 900;
+      const quotaPercent = quotaTargetSeconds > 0 ? Math.min(999, Math.round((newWeeklyTotalSeconds / quotaTargetSeconds) * 100)) : 100;
+      const summaryEmbed = {
+        title: 'Shift End Summary',
+        color: 0x2ECC71,
+        description: "Here's your executive receipt for the shift you just ended.",
+        fields: [
+          { name: 'Shift Duration', value: formatDuration(elapsedSeconds), inline: true },
+          { name: 'Incidents Filed This Shift', value: String(incidentCount), inline: true },
+          { name: 'Weekly Quota Progress', value: `${formatDuration(newWeeklyTotalSeconds)} / ${formatDuration(quotaTargetSeconds)} (${quotaPercent}%)`, inline: false }
+        ],
+        timestamp: new Date().toISOString(),
+        footer: { text: 'Westpoint Security · Autolog Tracking System' }
+      };
+      dmDiscordUser(currentSession.id, 'Your shift has ended - see the summary below.', [summaryEmbed]).catch(() => {});
     }
 
     return sendJSON(res, 200, {

@@ -247,6 +247,11 @@ test('GET /employee/api-docs redirects unauthenticated requests', async () => {
   assert.strictEqual(res.status, 302);
 });
 
+test('POST /api/duty/end rejects unauthenticated requests', async () => {
+  const res = await post('/api/duty/end', {});
+  assert.strictEqual(res.status, 401);
+});
+
 test('GET /manifest.json is served and parses as valid JSON', async () => {
   const res = await get('/manifest.json');
   assert.strictEqual(res.status, 200);
