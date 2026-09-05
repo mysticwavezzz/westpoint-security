@@ -156,6 +156,27 @@ const SECURITY_HEADERS = {
 const SESSIONS = new Map();
 const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
 
+// Confirmation codes for destructive Command actions - NOT real two-factor
+// auth (no independent device/channel like SMS/authenticator/email), just a
+// stronger "type to confirm" pattern using a server-issued one-time code
+// instead of a fixed phrase. Proves the confirmation happened through a
+// live server round-trip rather than a client-side-only confirm() dialog
+// that devtools could bypass. The code is returned directly to the caller -
+// the friction is the deliberate second step, not secrecy of the code.
+const CONFIRMATION_CODES = new Map(); // key: `${userId}:${action}` -> { code, expiresAt }
+
+// Validates and single-use-consumes a confirmation code for the given user
+// and action. Returns true/false; deletes the entry either way so a code
+// can never be replayed, expired or not.
+function consumeConfirmationCode(userId, action, providedCode) {
+  const key = `${userId}:${action}`;
+  const entry = CONFIRMATION_CODES.get(key);
+  CONFIRMATION_CODES.delete(key);
+  if (!entry) return false;
+  if (Date.now() > entry.expiresAt) return false;
+  return String(providedCode) === entry.code;
+}
+
 function loadPersistedSessions() {
   try {
     if (fs.existsSync(SESSIONS_FILE)) {
@@ -518,7 +539,7 @@ function getBotDb() {
     } catch (e) {}
     return botDbInstance;
   } catch (e) {
-    console.error('[DATABASE CONNECT ERROR]', e.message);
+    logger.error('[DATABASE CONNECT ERROR] ' + e.message);
   }
   return null;
 }
@@ -699,6 +720,18 @@ function postDiscordMessage(channelId, embed) {
   });
 }
 
+// Structured logging: writes JSON lines to data/logs/ and, for errors only,
+// posts a deduped alert embed to the audit log channel via the Discord
+// poster above. Not a replacement for every console.error in this file -
+// prioritizes DB errors, Discord API failures, and the top-level request
+// handler catch, since those are the ones that indicate a real operational
+// problem rather than an expected/handled edge case.
+// Wrapped in a closure (rather than passing AUDIT_LOGS_CHANNEL_ID directly)
+// so a Command-panel channel-config change is picked up immediately - that
+// `let` gets reassigned at runtime, and a plain value captured here would
+// go stale after the first change.
+const logger = require('./lib/logger.js').createLogger((embed) => postDiscordMessage(AUDIT_LOGS_CHANNEL_ID, embed));
+
 // Uploads citizen/officer-submitted evidence (photos, PDFs, etc, sent from
 // the browser as base64 data URLs) to Discord and returns a link to the
 // message they land in - same "Discord as file host" pattern already used
@@ -732,7 +765,7 @@ async function uploadEvidenceToDiscord(evidenceItems, embedTitle, embedFields) {
     const msg = await videoLog.postMessage(DISCORD_BOT_TOKEN, AUDIT_LOGS_CHANNEL_ID, { embeds: [embed] }, files);
     return `https://discord.com/channels/${GUILD_ID}/${AUDIT_LOGS_CHANNEL_ID}/${msg.id}`;
   } catch (e) {
-    console.error('[EVIDENCE UPLOAD ERROR]', e.message);
+    logger.error('[EVIDENCE UPLOAD ERROR] ' + e.message);
     return null;
   } finally {
     localPaths.forEach(p => { try { fs.unlinkSync(p); } catch (e) {} });
@@ -860,6 +893,35 @@ function runBodycamAuditRandomizer(count = AUDIT_RANDOMIZER_COUNT) {
 setInterval(() => {
   if (new Date().getUTCDay() === 6) runBodycamAuditRandomizer();
 }, 24 * 60 * 60 * 1000);
+
+// Automated bot.db backups to R2. VACUUM INTO gives a consistent snapshot
+// of the live database without locking it for writers. Keeps the most
+// recent 14 backups (roughly two weeks at a daily cadence) and prunes the
+// rest so the bucket doesn't grow without bound.
+const BODYCAM_BACKUP_RETAIN_COUNT = 14;
+async function backupDatabaseToR2() {
+  const db = getBotDb();
+  if (!db || !r2.isConfigured()) return;
+  const snapshotPath = video.tempPath('db');
+  try {
+    db.exec(`VACUUM INTO '${snapshotPath.replace(/'/g, "''")}'`);
+    const buffer = fs.readFileSync(snapshotPath);
+    const key = `backups/bot-db-${new Date().toISOString().replace(/[:.]/g, '-')}.db`;
+    await r2.putObject(key, buffer, 'application/octet-stream');
+
+    const existing = await r2.listObjectsWithSize('backups/bot-db-');
+    if (existing.length > BODYCAM_BACKUP_RETAIN_COUNT) {
+      const toDelete = existing.sort((a, b) => a.key < b.key ? -1 : 1).slice(0, existing.length - BODYCAM_BACKUP_RETAIN_COUNT);
+      await r2.deleteObjects(toDelete.map(o => o.key));
+    }
+    logger.info('[DB BACKUP] Snapshot uploaded: ' + key);
+  } catch (e) {
+    logger.error('[DATABASE BACKUP ERROR] ' + e.message);
+  } finally {
+    try { fs.unlinkSync(snapshotPath); } catch (e) {}
+  }
+}
+setInterval(backupDatabaseToR2, 24 * 60 * 60 * 1000);
 
 // Fetch Guild Member via Bot Token
 function fetchGuildMember(discordUserId) {
@@ -1713,7 +1775,7 @@ const server = http.createServer(async (req, res) => {
           });
         });
       } catch (dbErr) {
-        console.error('[ROSTER DB ERROR]', dbErr.message);
+        logger.error('[ROSTER DB ERROR] ' + dbErr.message);
       }
     }
 
@@ -2151,7 +2213,7 @@ const server = http.createServer(async (req, res) => {
             updated_at = excluded.updated_at
         `).run(targetUserId, actionType, DEPT_LOGS_CHANNEL_ID, msgId, Date.now());
       } catch (e) {
-        console.error('[ACTION STATE DB ERROR]', e.message);
+        logger.error('[ACTION STATE DB ERROR] ' + e.message);
       }
     }
 
@@ -2419,6 +2481,32 @@ const server = http.createServer(async (req, res) => {
     return sendJSON(res, 200, { stale });
   }
 
+  // API: POST /api/admin/request-confirmation (Command Only - issues a
+  // one-time code for a named destructive action, valid for 2 minutes)
+  if (pathname === '/api/admin/request-confirmation' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    const body = await parseBody(req);
+    if (!['reset-quota', 'channel-config'].includes(body.action)) {
+      return sendJSON(res, 400, { error: 'Unknown action.' });
+    }
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    CONFIRMATION_CODES.set(`${currentSession.id}:${body.action}`, { code, expiresAt: Date.now() + 2 * 60 * 1000 });
+    return sendJSON(res, 200, { code });
+  }
+
+  // API: POST /api/admin/backup-now (Command Only - manual on-demand
+  // trigger for the same snapshot the daily scheduled backup runs)
+  if (pathname === '/api/admin/backup-now' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    if (!r2.isConfigured()) return sendJSON(res, 503, { error: 'R2 storage is not configured on this server.' });
+    await backupDatabaseToR2();
+    return sendJSON(res, 200, { success: true });
+  }
+
   // API: POST /api/admin/reset-quota-logs (Command Only - wipe weekly quota
   // totals and shift history for a clean slate. Does not touch active
   // sessions, the staff roster, or bodycam video logs on Discord - those
@@ -2426,6 +2514,10 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/admin/reset-quota-logs' && req.method === 'POST') {
     if (!currentSession || !currentSession.permissions.isCommand) {
       return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
+    }
+    const resetBody = await parseBody(req);
+    if (!consumeConfirmationCode(currentSession.id, 'reset-quota', resetBody.confirmationCode)) {
+      return sendJSON(res, 400, { error: 'Invalid or expired confirmation code - request a new one and try again.' });
     }
     const db = getBotDb();
     if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
@@ -2528,6 +2620,9 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
     }
     const body = await parseBody(req);
+    if (!consumeConfirmationCode(currentSession.id, 'channel-config', body.confirmationCode)) {
+      return sendJSON(res, 400, { error: 'Invalid or expired confirmation code - request a new one and try again.' });
+    }
     const clean = (val) => String(val || '').trim().replace(/[^0-9]/g, '').slice(0, 32);
     const next = {
       deptLogsChannelId: clean(body.deptLogsChannelId) || DEPT_LOGS_CHANNEL_ID,
@@ -2562,7 +2657,7 @@ const server = http.createServer(async (req, res) => {
           });
         }
       } catch (e) {
-        console.error('[DUTY STATUS DB ERROR]', e.message);
+        logger.error('[DUTY STATUS DB ERROR] ' + e.message);
       }
     }
     return sendJSON(res, 200, { active: false });
@@ -2627,7 +2722,7 @@ const server = http.createServer(async (req, res) => {
           start_time = excluded.start_time
       `).run(currentSession.id, String(verification.robloxId), verification.robloxUsername, startTime);
     } catch (e) {
-      console.error('[DUTY START DB ERROR]', e.message);
+      logger.error('[DUTY START DB ERROR] ' + e.message);
       return sendJSON(res, 500, { error: 'Failed to record duty session in database' });
     }
 
@@ -3136,6 +3231,26 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // API Docs page (Command Only - documents internal admin routes too, so
+  // gated tighter than the dashboard itself)
+  if (pathname === '/employee/api-docs') {
+    if (!currentSession || !currentSession.permissions.isCommand) {
+      const dest = currentSession ? '/employee?error=unauthorized_role' : '/employee';
+      res.writeHead(302, { 'Location': dest, ...SECURITY_HEADERS });
+      return res.end();
+    }
+    const filePath = path.join(VIEWS_DIR, 'api-docs.html');
+    fs.readFile(filePath, (err, data) => {
+      if (err) {
+        res.writeHead(500, { 'Content-Type': 'text/plain', ...SECURITY_HEADERS });
+        return res.end('500 Server Error');
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...SECURITY_HEADERS });
+      res.end(data);
+    });
+    return;
+  }
+
   // 17. Static Page Views
   // Auto-redirect to dashboard if already authenticated as staff
   if (pathname === '/employee' && currentSession && currentSession.permissions.isOfficer) {
@@ -3189,7 +3304,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(413, { 'Content-Type': 'application/json; charset=utf-8', ...SECURITY_HEADERS });
       return res.end(JSON.stringify({ error: 'Payload Too Large: Maximum allowed size is 64KB.' }));
     }
-    console.error('[UNHANDLED SERVER ERROR]', err);
+    logger.error('[UNHANDLED SERVER ERROR] ' + (err && err.stack || err));
     if (!res.headersSent) {
       res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8', ...SECURITY_HEADERS });
       res.end(JSON.stringify({ error: 'Internal Server Error' }));

@@ -227,6 +227,26 @@ test('POST /api/bodycam/:id/tags rejects unauthenticated requests', async () => 
   assert.strictEqual(res.status, 401);
 });
 
+test('POST /api/admin/backup-now rejects unauthenticated requests', async () => {
+  const res = await post('/api/admin/backup-now', {});
+  assert.strictEqual(res.status, 403);
+});
+
+test('POST /api/admin/request-confirmation rejects unauthenticated requests', async () => {
+  const res = await post('/api/admin/request-confirmation', { action: 'reset-quota' });
+  assert.strictEqual(res.status, 403);
+});
+
+test('POST /api/admin/reset-quota-logs rejects unauthenticated requests before checking a code', async () => {
+  const res = await post('/api/admin/reset-quota-logs', {});
+  assert.strictEqual(res.status, 403);
+});
+
+test('GET /employee/api-docs redirects unauthenticated requests', async () => {
+  const res = await get('/employee/api-docs');
+  assert.strictEqual(res.status, 302);
+});
+
 test('GET /manifest.json is served and parses as valid JSON', async () => {
   const res = await get('/manifest.json');
   assert.strictEqual(res.status, 200);

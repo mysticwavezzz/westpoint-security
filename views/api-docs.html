@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>API Reference | Westpoint Security</title>
+  <link rel="icon" href="/assets/favicon.png" />
+  <link rel="stylesheet" href="/css/style.css" />
+  <style>
+    .api-table td, .api-table th { vertical-align: top; }
+    .api-table code { font-size: 10.5px; background: rgba(0,0,0,0.05); padding: 1px 4px; border-radius: 2px; }
+    .api-method { font-family: monospace; font-weight: bold; font-size: 10px; padding: 2px 6px; border-radius: 3px; display: inline-block; }
+    .api-method-get { background: #E3F2FD; color: #1565C0; }
+    .api-method-post { background: #E8F5E9; color: #2E7D32; }
+    .api-method-delete { background: #FFEBEE; color: #C62828; }
+    .api-jump { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <div class="page-shell">
+    <nav class="utility-nav" aria-label="Utility navigation">
+      <a href="/employee/dashboard">&laquo; BACK TO DASHBOARD</a>
+      <span aria-hidden="true"> | </span>
+      <a href="/employee" onclick="handleSignOut(event)" style="color: #9E2A2B;">SIGN OUT</a>
+    </nav>
+
+    <header class="masthead">
+      <a href="/" class="masthead-identity">
+        <img src="/assets/logo.png" alt="Westpoint Security" width="78" height="78" class="masthead-logo" />
+        <div class="corporate-identity">
+          <span class="corporate-name">Westpoint Security</span>
+          <span class="corporate-branch">Harrison Branch</span>
+        </div>
+      </a>
+      <div class="headquarters-summary">
+        <strong>INTERNAL REFERENCE</strong>
+        <span>Command Only</span>
+      </div>
+    </header>
+
+    <main class="main-layout" id="main-content" tabindex="-1">
+      <article class="main-content">
+        <h1>API Reference</h1>
+        <p class="lead-copy">
+          Every route this server exposes, hand-curated from <code>server.js</code> - not auto-generated, so keep it in sync manually when routes change. Auth tiers: <strong>Public</strong> (no session, or any signed-in Discord user - citizens included), <strong>Officer</strong> (any staff role), <strong>Supervisor</strong>, <strong>Command</strong> (High Command; implies Supervisor and Internal Affairs), <strong>Internal Affairs</strong>. Gated routes return <code>401</code> (no session) or <code>403</code> (wrong tier).
+        </p>
+
+        <section class="content-box" style="margin-bottom: 14px;">
+          <div class="content-box-body">
+            <div class="api-jump">
+              <a href="#sec-public" class="period-button period-button-secondary" style="font-size: 9px; padding: 5px 10px;">PUBLIC</a>
+              <a href="#sec-officer" class="period-button period-button-secondary" style="font-size: 9px; padding: 5px 10px;">OFFICER</a>
+              <a href="#sec-supervisor" class="period-button period-button-secondary" style="font-size: 9px; padding: 5px 10px;">SUPERVISOR</a>
+              <a href="#sec-command" class="period-button period-button-secondary" style="font-size: 9px; padding: 5px 10px;">COMMAND / IA</a>
+              <a href="#sec-bodycam" class="period-button period-button-secondary" style="font-size: 9px; padding: 5px 10px;">BODYCAM &amp; DUTY</a>
+            </div>
+          </div>
+        </section>
+
+        <section class="content-box" style="margin-bottom: 14px;" id="sec-public">
+          <h2>Public</h2>
+          <div class="content-box-body">
+            <p style="font-size: 11px; color: #546675; margin-bottom: 10px;">No session required unless noted "any session" - that tier just means a citizen must be signed in with Discord, no staff role needed.</p>
+            <div class="period-table-wrap">
+              <table class="period-table api-table">
+                <thead><tr><th>Method</th><th>Path</th><th>Tier</th><th>Description</th><th>Body / Response</th></tr></thead>
+                <tbody>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/health</code></td><td>Public</td><td>Liveness check - uptime, DB connectivity, R2/Discord config flags.</td><td>Res: <code>{status, uptimeSeconds, database, r2Configured, discordTokenConfigured}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/auth/discord</code></td><td>Public</td><td>Redirects to Discord OAuth2 authorize. <code>?next=employee|contact</code> controls the post-login destination.</td><td>302 redirect</td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/auth/discord/callback</code></td><td>Public</td><td>OAuth2 callback - exchanges the code, resolves guild roles + Roblox link, sets the <code>wp_session</code> cookie.</td><td>302 redirect, sets cookie</td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/auth/me</code></td><td>Any session</td><td>Returns the caller's own session profile (permissions, rank, Roblox link).</td><td>Res: <code>{authenticated, id, username, permissions, ...}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/auth/logout</code></td><td>Public</td><td>Clears the session cookie and server-side session record.</td><td>302 redirect</td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/public/blotter</code></td><td>Public</td><td>Recent incident log, redacted (no officer/suspect/summary/location fields).</td><td>Res: <code>{blotter: [...]}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/public/transparency</code></td><td>Public</td><td>Aggregate incident counts by month and by action type. Counts only, never identifying detail.</td><td>Res: <code>{byMonth, byAction, totalIncidents}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/public/patrol-count</code></td><td>Public</td><td>Current number of officers on active duty.</td><td>Res: <code>{count}</code></td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/report</code></td><td>Any session</td><td>Citizen submits a misconduct report or commendation, with optional base64 evidence uploaded to Discord.</td><td>Body: <code>{type, officer, location, report, evidence?}</code> · Res: <code>{success, record}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/report/:id/status</code></td><td>Public</td><td>Status lookup by case number (like a tracking number) - returns status/type/date only, never the case body.</td><td>Res: <code>{id, type, status, submitted}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/my-reports</code></td><td>Any session</td><td>Every report/commendation the caller personally filed (matched by their Discord ID).</td><td>Res: <code>{reports: [...]}</code></td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/contact/staff</code></td><td>Any session</td><td>General citizen inquiry to staff - posts an embed to the audit log channel.</td><td>Body: <code>{senderName?, category, message}</code> · Res: <code>{success, id}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/careers/positions</code></td><td>Public</td><td>Every listed job position, including closed ones.</td><td>Res: <code>{positions: [...]}</code></td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/careers/apply</code></td><td>Any session</td><td>Apply to an open position. 400 if the position isn't <code>open</code>.</td><td>Body: <code>{positionId, coverLetter}</code> · Res: <code>{success, record}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/news</code></td><td>Public</td><td>Published news/bulletin list.</td><td>Res: <code>{news: [...]}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/news/:id</code></td><td>Public</td><td>Single news article by ID.</td><td>Res: <code>{article}</code></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="content-box" style="margin-bottom: 14px;" id="sec-officer">
+          <h2>Officer</h2>
+          <div class="content-box-body">
+            <div class="period-table-wrap">
+              <table class="period-table api-table">
+                <thead><tr><th>Method</th><th>Path</th><th>Description</th><th>Body / Response</th></tr></thead>
+                <tbody>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/staff-directory</code></td><td>Every tracked staff member, current flags, last known rank.</td><td>Res: <code>{staff: [...]}</code>, each with <code>flags: string[]</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/staff-flags/options</code></td><td>The fixed staff-flag vocabulary Command can apply.</td><td>Res: <code>{flags: string[]}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/push/vapid-public-key</code></td><td>VAPID public key for browser push subscription.</td><td>Res: <code>{publicKey}</code> (503 if not configured)</td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/push/subscribe</code></td><td>Registers a browser push subscription for quota-reminder notifications.</td><td>Body: <code>PushSubscription.toJSON()</code> shape</td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/push/unsubscribe</code></td><td>Removes a push subscription by endpoint.</td><td>Body: <code>{endpoint}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/fto/stages</code></td><td>The fixed FTO checklist stage list.</td><td>Res: <code>{stages: string[]}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/fto/my-progress</code></td><td>Caller's own active FTO assignment + sign-off status per stage. <code>?userId=</code> requires Supervisor to view someone else's.</td><td>Res: <code>{assignment, stages: [...]}</code></td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/fto/signoff</code></td><td>Sign off one FTO stage. Caller must be the assignment's trainer or a Supervisor. Auto-completes the assignment once every stage is signed.</td><td>Body: <code>{assignmentId, stageName, notes?}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/officer/stats</code></td><td>Caller's personal career stats: lifetime duty, incidents filed, best-effort commendation match.</td><td>Res: <code>{lifetimeFormatted, incidentsFiled, commendationsReceived}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/duty-roster</code></td><td>Live active duty sessions + this week's leaderboard.</td><td>Res: <code>{active: [...], leaderboard: [...]}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/officer/incidents</code></td><td>Caller's own filed incident reports.</td><td>Res: <code>{incidents: [...]}</code></td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/officer/incident</code></td><td>File a new incident report, posts to department logs.</td><td>Body: <code>{action, summary, location, ...}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/employee/dashboard</code></td><td>The Officer Workbench page itself.</td><td>HTML page</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="content-box" style="margin-bottom: 14px;" id="sec-supervisor">
+          <h2>Supervisor</h2>
+          <div class="content-box-body">
+            <p style="font-size: 11px; color: #546675; margin-bottom: 10px;">Command satisfies these too - <code>isCommand</code> implies <code>isSupervisor</code>.</p>
+            <div class="period-table-wrap">
+              <table class="period-table api-table">
+                <thead><tr><th>Method</th><th>Path</th><th>Description</th><th>Body / Response</th></tr></thead>
+                <tbody>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/admin/bodycam/review-queue</code></td><td>Bodycam recordings unreviewed or flagged for review.</td><td>Res: <code>{queue: [...]}</code></td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/bodycam/:id/review</code></td><td>Flag a recording for review, or mark it reviewed.</td><td>Body: <code>{action: 'flag'|'mark-reviewed'}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/admin/bodycam/search</code></td><td>Cross-officer shift log search by date/tag/officer ID (all optional, AND-combined).</td><td>Query: <code>?date=&tag=&userId=</code> · Res: <code>{results: [...]}</code></td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/admin/bodycam/audit-randomizer/run</code></td><td>Manually runs the Bodycam Audit Randomizer on demand (also runs automatically every Saturday).</td><td>Res: <code>{success, selected: id[]}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/admin/bodycam/audit-randomizer/history</code></td><td>Recent randomizer selections and their review status.</td><td>Res: <code>{history: [...]}</code></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="content-box" style="margin-bottom: 14px;" id="sec-command">
+          <h2>Command / Internal Affairs</h2>
+          <div class="content-box-body">
+            <p style="font-size: 11px; color: #546675; margin-bottom: 10px;">"Command" rows require <code>isCommand</code> (403 otherwise). "Internal Affairs" rows require <code>isInternalAffairs</code>, which Command also holds.</p>
+            <div class="period-table-wrap">
+              <table class="period-table api-table">
+                <thead><tr><th>Method</th><th>Path</th><th>Tier</th><th>Description</th><th>Body / Response</th></tr></thead>
+                <tbody>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/admin/staff-flags</code></td><td>Command</td><td>Add or remove a staff flag on a user.</td><td>Body: <code>{userId, flagName, action: 'add'|'remove'}</code></td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/command/fto/assign</code></td><td>Command</td><td>Create an FTO assignment; auto-sets "FTO Trainee"/"FTO Trainer" flags.</td><td>Body: <code>{traineeUserId, trainerUserId}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/command/fto/assignments</code></td><td>Command</td><td>Every FTO assignment, joined with display names.</td><td>Res: <code>{assignments: [...]}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/ia/reports</code></td><td>Internal Affairs</td><td>Full unredacted misconduct/commendation report list.</td><td>Res: <code>{reports: [...]}</code></td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/ia/report/update</code></td><td>Internal Affairs</td><td>Update a case's status/findings; DMs the citizen filer once it resolves.</td><td>Body: <code>{reportId, status?, findings?}</code></td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/command/action</code></td><td>Command</td><td>Issues a staff action (hire/promote/demote/etc), posts a formatted embed to the admin log.</td><td>Body: <code>{type, targetUser, targetUserId?, roleRank?, context?, notes?}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/command/actions</code></td><td>Command</td><td>Full administrative action history.</td><td>Res: <code>{actions: [...]}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/admin/export/:kind.csv</code></td><td>Command</td><td>CSV download - <code>kind</code> is <code>actions</code>, <code>reports</code>, or <code>quota</code>.</td><td>Res: CSV file</td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/admin/careers/applications</code></td><td>Command</td><td>Every job application on file.</td><td>Res: <code>{applications: [...]}</code></td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/admin/careers/applications/update</code></td><td>Command</td><td>Update an application's status.</td><td>Body: <code>{applicationId, status}</code></td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/admin/careers/positions</code></td><td>Command</td><td>Create or update (if <code>id</code> present) a job position, including opening/closing it.</td><td>Body: <code>{id?, title, department, description, status}</code></td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/news</code></td><td>Command</td><td>Publish a news article.</td><td>Body: <code>{title, category, body, ...}</code></td></tr>
+                  <tr><td><span class="api-method api-method-delete">DELETE</span></td><td><code>/api/news/:id</code></td><td>Command</td><td>Delete a news article.</td><td>Res: <code>{success}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/admin/analytics</code></td><td>Command</td><td>8-week time series: total duty hours, active officers, quota compliance %.</td><td>Res: <code>{weeks: [...]}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/admin/flags/quota-risk</code></td><td>Command</td><td>Officers under quota for 3 consecutive weeks running.</td><td>Res: <code>{flagged: [...]}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/admin/flags/stale-ia</code></td><td>Command</td><td>Unresolved IA cases open 7+ days.</td><td>Res: <code>{stale: [...]}</code></td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/admin/request-confirmation</code></td><td>Command</td><td>Issues a one-time confirmation code (2min expiry) for a destructive action. Not real 2FA - see below.</td><td>Body: <code>{action: 'reset-quota'|'channel-config'}</code> · Res: <code>{code}</code></td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/admin/backup-now</code></td><td>Command</td><td>Triggers an immediate bot.db snapshot backup to R2.</td><td>Res: <code>{success}</code> (503 if R2 not configured)</td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/admin/reset-quota-logs</code></td><td>Command</td><td>Wipes all weekly quota totals and shift history. Requires a valid <code>confirmationCode</code> from request-confirmation.</td><td>Body: <code>{confirmationCode}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/admin/roles</code></td><td>Command</td><td>Live Discord guild roles merged with saved tier config.</td><td>Res: <code>{roles: [...]}</code></td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/admin/roles</code></td><td>Command</td><td>Save role-to-tier mapping. Applies immediately (revalidates active sessions).</td><td>Body: <code>{roles: [...]}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/admin/channels</code></td><td>Command</td><td>Current channel/guild ID config for website Discord posts.</td><td>Res: <code>{channels}</code></td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/admin/channels</code></td><td>Command</td><td>Save channel/guild ID config. Requires a valid <code>confirmationCode</code>.</td><td>Body: <code>{deptLogsChannelId, auditLogsChannelId, videoLogGuildId, videoLogParentId, confirmationCode}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/employee/api-docs</code></td><td>Command</td><td>This page.</td><td>HTML page</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p style="font-size: 10.5px; color: #90A4AE; margin-top: 10px;">
+              <strong>Note on confirmation codes:</strong> this is not real two-factor authentication - there's no independent second channel (SMS/authenticator/email). It's a stronger "type to confirm" pattern: a server-issued one-time code proves the confirmation happened through a live round-trip, rather than a client-side <code>confirm()</code> dialog that devtools could bypass. The code is returned directly to the caller; the friction is the deliberate second step, not secrecy.
+            </p>
+          </div>
+        </section>
+
+        <section class="content-box" style="margin-bottom: 14px;" id="sec-bodycam">
+          <h2>Bodycam &amp; Duty</h2>
+          <div class="content-box-body">
+            <p style="font-size: 11px; color: #546675; margin-bottom: 10px;">Grouped by feature area rather than tier - most require Officer, but per-recording routes additionally check that the caller owns the recording or holds Supervisor+.</p>
+            <div class="period-table-wrap">
+              <table class="period-table api-table">
+                <thead><tr><th>Method</th><th>Path</th><th>Tier</th><th>Description</th><th>Body / Response</th></tr></thead>
+                <tbody>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/duty/status</code></td><td>Officer</td><td>Caller's current active duty session, if any.</td><td>Res: <code>{active, startTime, elapsedSeconds, ...}</code></td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/duty/start</code></td><td>Officer</td><td>Starts a duty shift after verifying the caller is present in-game.</td><td>Res: <code>{success, robloxUsername}</code> (400 if not verified in-game)</td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/duty/end</code></td><td>Officer</td><td>Ends the active duty shift, credits quota time, finalizes bodycam.</td><td>Res: <code>{success, durationSeconds}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/bodycam/storage-status</code></td><td>Officer</td><td>Current department bodycam storage usage.</td><td>Res: <code>{usedBytes, ...}</code></td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/bodycam/start</code></td><td>Officer</td><td>Starts a bodycam recording session tied to the active duty shift.</td><td>Res: <code>{bodycamId}</code></td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/bodycam/chunk</code></td><td>Officer</td><td>Uploads one recorded video chunk. Raw video body, <code>?bodycamId=&index=</code>.</td><td>Body: raw video/webm</td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/bodycam/stop</code></td><td>Officer</td><td>Stops recording; merge/upload to Discord finalizes in the background.</td><td>Res: <code>{success}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/bodycam/:id/status</code></td><td>Any session</td><td>Processing status of a recording (recording/processing/ready/failed).</td><td>Res: <code>{status, ...}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/bodycam/:id/chunks</code></td><td>Owner or Supervisor+</td><td>Near-live chunk list for the in-progress viewer, <code>?since=</code> for polling.</td><td>Res: <code>{chunks: [...]}</code></td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/bodycam/:id/playback</code></td><td>Owner or Supervisor+</td><td>Discord message links for a finished recording's video part(s).</td><td>Res: <code>{shiftNumber, parts, durationSeconds}</code></td></tr>
+                  <tr><td><span class="api-method api-method-post">POST</span></td><td><code>/api/bodycam/:id/tags</code></td><td>Owner or Supervisor+</td><td>Set clip tags from the fixed vocabulary (Traffic Stop, Pursuit, Arrest, Use of Force, Standard Patrol, Other).</td><td>Body: <code>{tags: string[]}</code> (400 on an unrecognized tag)</td></tr>
+                  <tr><td><span class="api-method api-method-get">GET</span></td><td><code>/api/officer/:userId/shifts</code></td><td>Self or Supervisor+</td><td>Shift history with bodycam status/tags for one officer.</td><td>Res: <code>{shifts: [...]}</code></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </article>
+    </main>
+
+    <footer class="site-footer">
+      <p><strong>Westpoint Security &middot; Officer Duty Station</strong></p>
+      <p class="last-updated">Reference current as of this document's last manual update - verify against server.js if anything looks stale.</p>
+    </footer>
+  </div>
+
+  <script>
+    function handleSignOut(e) {
+      if (e) e.preventDefault();
+      window.location.href = '/api/auth/logout';
+    }
+  </script>
+</body>
+</html>
