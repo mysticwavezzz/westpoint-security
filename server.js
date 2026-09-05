@@ -225,7 +225,7 @@ const DEFAULT_POSITIONS = [
 
 // FTO (Field Training Officer) checklist stages - fixed list rather than
 // free text, so progress is actually queryable/consistent across trainees.
-const FTO_STAGES = ['Radio Procedures', 'Traffic Stops', 'Report Writing', 'Use of Force Policy', 'Final Ride-Along'];
+const FTO_STAGES = ['Phase 1', 'Phase 2', 'Phase 3', 'Ride Along'];
 
 // Predefined staff flag vocabulary - Command picks from this list rather
 // than free-typing, so flags stay consistent/filterable. Extensible later;

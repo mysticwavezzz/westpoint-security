@@ -1136,13 +1136,14 @@
           document.getElementById('tabBtnIA').style.display = 'inline-block';
         }
 
-        // FTO Trainer Sign-Off: only shown to officers who actually hold the
-        // "FTO Trainer" flag, or Supervisor+ (who can sign off any
-        // assignment as oversight) - the server enforces the real check
-        // independently either way, this just avoids showing a form to
-        // everyone that would 403 for almost all of them.
+        // FTO Trainer Sign-Off: strictly tag-based - only shown to officers
+        // Command has actually flagged as "FTO Trainer", regardless of rank.
+        // A Supervisor/Command member without the tag does NOT see this
+        // (the server still lets a Supervisor sign off any assignment as a
+        // manual fallback if they go looking, but the UI isn't handed to
+        // them by default just for holding a rank).
         const myFlags = data.flags || [];
-        if (myFlags.includes('FTO Trainer') || perms.isSupervisor) {
+        if (myFlags.includes('FTO Trainer')) {
           document.getElementById('ftoSignoffBox').style.display = 'block';
         }
       } catch (e) {
