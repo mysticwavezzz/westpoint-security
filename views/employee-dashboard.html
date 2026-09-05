@@ -76,7 +76,8 @@
           <button type="button" class="dash-tab-btn" onclick="switchTab('roster')">2. Live Duty Roster</button>
           <button type="button" class="dash-tab-btn" onclick="switchTab('incidents')">3. Incident Archive</button>
           <button type="button" class="dash-tab-btn" id="tabBtnIA" style="display: none;" onclick="switchTab('ia')">4. Internal Affairs Desk</button>
-          <button type="button" class="dash-tab-btn" id="tabBtnCommand" style="display: none;" onclick="switchTab('command')">5. Command Center</button>
+          <button type="button" class="dash-tab-btn" id="tabBtnStaffDirectory" onclick="switchTab('staff-directory')">5. Staff Directory</button>
+          <button type="button" class="dash-tab-btn" id="tabBtnCommand" style="display: none;" onclick="switchTab('command')">6. Command Center</button>
         </div>
 
         <!-- ==============================================
@@ -158,6 +159,9 @@
                   </label>
                   <label>Incident Narrative & Description:
                     <textarea name="summary" required placeholder="Detail sequence of events, radio calls, and final disposition..."></textarea>
+                  </label>
+                  <label>Evidence (photos/screenshots, optional, up to 5 files, 4MB each):
+                    <input type="file" name="evidenceFiles" accept="image/*,.pdf" multiple />
                   </label>
                 </fieldset>
                 <div>
@@ -243,6 +247,9 @@
           <section class="content-box">
             <h2>Incident Reports Archive</h2>
             <div class="content-box-body" style="padding: 0;">
+              <div style="padding: 10px 12px; border-bottom: 1px solid #ECEFF1;">
+                <input type="text" id="incidentsSearchInput" placeholder="Search by ID, officer, location, action, or summary..." style="width: 100%; box-sizing: border-box;" oninput="renderIncidentsPage(1)" />
+              </div>
               <div class="period-table-wrap" style="margin-bottom: 0; border: none;">
                 <table class="period-table">
                   <thead>
@@ -260,6 +267,7 @@
                   </tbody>
                 </table>
               </div>
+              <div id="incidentsPagination" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; font-size: 11px;"></div>
             </div>
           </section>
         </section>
@@ -281,6 +289,16 @@
           <section class="content-box">
             <h2>Citizen Intake Reports</h2>
             <div class="content-box-body" style="padding: 0;">
+              <div style="padding: 10px 12px; border-bottom: 1px solid #ECEFF1; display: flex; gap: 10px; flex-wrap: wrap;">
+                <input type="text" id="iaSearchInput" placeholder="Search by case ID, citizen, officer, or location..." style="flex: 1; min-width: 200px;" oninput="renderIAReportsPage(1)" />
+                <select id="iaStatusFilter" onchange="renderIAReportsPage(1)">
+                  <option value="">All Statuses</option>
+                  <option value="New">New</option>
+                  <option value="Under Review">Under Review</option>
+                  <option value="Resolved - Action Taken">Resolved - Action Taken</option>
+                  <option value="Unfounded / Dismissed">Unfounded / Dismissed</option>
+                </select>
+              </div>
               <div class="period-table-wrap" style="margin-bottom: 0; border: none;">
                 <table class="period-table">
                   <thead>
@@ -300,6 +318,7 @@
                   </tbody>
                 </table>
               </div>
+              <div id="iaReportsPagination" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; font-size: 11px;"></div>
             </div>
           </section>
 
@@ -312,6 +331,9 @@
                 <blockquote id="iaCaseNarrative" style="margin: 6px 0; font-style: italic; color: #2D3942; background: #FFF; padding: 8px 12px; border-left: 3px solid #9E2A2B;"></blockquote>
                 <p style="margin: 6px 0 0; font-size: 11px; color: #546675;">
                   Reported Officer: <strong id="iaCaseOfficer">N/A</strong> · Location: <span id="iaCaseLoc">N/A</span>
+                </p>
+                <p id="iaCaseEvidenceRow" style="margin: 6px 0 0; font-size: 11px; display: none;">
+                  <a id="iaCaseEvidenceLink" href="#" target="_blank" rel="noopener">[ VIEW SUBMITTED EVIDENCE ]</a>
                 </p>
               </div>
 
@@ -336,6 +358,43 @@
                 </div>
                 <div id="iaUpdateStatus" style="margin-top: 8px; font-weight: bold; font-size: 11px;"></div>
               </form>
+            </div>
+          </section>
+        </section>
+
+        <!-- ==============================================
+             TAB: STAFF DIRECTORY (all staff, not just this week)
+             ============================================== -->
+        <section id="tab-staff-directory" class="dash-section">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <p style="margin: 0; font-size: 12px; color: #546675;">
+              Every staff member ever tracked by the department, regardless of activity this week. Rank reflects each member's last duty shift, not necessarily their current Discord roles.
+            </p>
+            <button type="button" class="period-button period-button-secondary" onclick="loadStaffDirectory()">[ REFRESH ]</button>
+          </div>
+
+          <section class="content-box">
+            <h2>Staff Directory</h2>
+            <div class="content-box-body" style="padding: 0;">
+              <div style="padding: 10px 12px; border-bottom: 1px solid #ECEFF1;">
+                <input type="text" id="staffDirectorySearchInput" placeholder="Search by name or rank..." style="width: 100%; box-sizing: border-box;" oninput="renderStaffDirectoryPage(1)" />
+              </div>
+              <div class="period-table-wrap" style="margin-bottom: 0; border: none;">
+                <table class="period-table">
+                  <thead>
+                    <tr>
+                      <th>Staff Member</th>
+                      <th>Rank</th>
+                      <th>Discord User ID</th>
+                      <th>Last Active</th>
+                    </tr>
+                  </thead>
+                  <tbody id="staffDirectoryTableBody">
+                    <tr><td colspan="4" class="table-empty-msg">Loading staff directory...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div id="staffDirectoryPagination" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; font-size: 11px;"></div>
             </div>
           </section>
         </section>
@@ -416,10 +475,11 @@
                       <th style="text-align: center;">Supervisor</th>
                       <th style="text-align: center;">Command</th>
                       <th style="text-align: center;">Internal Affairs</th>
+                      <th style="text-align: center;">Weekly Quota (min)</th>
                     </tr>
                   </thead>
                   <tbody id="rolePermissionsTableBody">
-                    <tr><td colspan="5" class="table-empty-msg">Loading roles from Discord...</td></tr>
+                    <tr><td colspan="6" class="table-empty-msg">Loading roles from Discord...</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -571,6 +631,10 @@
       if (tabKey === 'ia') {
         document.getElementById('tabBtnIA')?.classList.add('is-active');
         loadIAReports();
+      }
+      if (tabKey === 'staff-directory') {
+        document.getElementById('tabBtnStaffDirectory')?.classList.add('is-active');
+        loadStaffDirectory();
       }
       if (tabKey === 'command') {
         document.getElementById('tabBtnCommand')?.classList.add('is-active');
@@ -1056,6 +1120,19 @@
       }
     }
 
+    // Reads a FileList into [{name, dataUrl}] for endpoints that accept
+    // evidence as base64 within the normal JSON body (see
+    // uploadEvidenceToDiscord in server.js) rather than multipart/form-data.
+    function filesToDataUrls(fileList) {
+      const files = Array.from(fileList || []).slice(0, 5);
+      return Promise.all(files.map(file => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve({ name: file.name, dataUrl: reader.result });
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      })));
+    }
+
     // Submit Incident
     async function submitIncident(e) {
       e.preventDefault();
@@ -1068,7 +1145,8 @@
         location: form.incidentLoc.value,
         suspect: form.suspectName.value || 'N/A',
         action: form.actionTaken.value,
-        summary: form.summary.value
+        summary: form.summary.value,
+        evidence: await filesToDataUrls(form.evidenceFiles.files)
       };
 
       try {
@@ -1133,16 +1211,21 @@
           lbTable.innerHTML = '<tr><td colspan="6" class="table-empty-msg">No weekly duty records logged yet.</td></tr>';
         } else {
           lbTable.innerHTML = data.weeklyQuotaLeaderboard.map((item, index) => {
-            const isTargetMet = item.totalSeconds >= (60 * 60); // 1 hour threshold for example
+            // Target comes from the officer's actual Discord role(s) (see
+            // Role Permissions in the Command tab) - the highest quota among
+            // roles they hold, not a fixed number - replacing what used to
+            // be a hardcoded 1-hour placeholder disconnected from the real
+            // 12-minute/15-minute thresholds actually enforced server-side.
+            const isTargetMet = item.quotaMet;
             return `
               <tr>
                 <td style="font-weight: bold; text-align: center;">#${index + 1}</td>
                 <td><strong>${escapeHtml(item.robloxUsername)}</strong></td>
                 <td style="font-family: monospace; font-size: 11px;">${escapeHtml(item.userId)}</td>
-                <td style="font-family: monospace; font-weight: bold;">${escapeHtml(item.totalFormatted)}</td>
+                <td style="font-family: monospace; font-weight: bold;">${escapeHtml(item.totalFormatted)} <span style="font-weight: normal; color: #90A4AE;">/ ${escapeHtml(item.quotaTargetFormatted)}</span></td>
                 <td>
                   <span class="status-pill ${isTargetMet ? 'status-pill-green' : 'status-pill-yellow'}">
-                    ${isTargetMet ? 'COMPLIANT' : 'PENDING'}
+                    ${isTargetMet ? 'COMPLIANT' : `${item.quotaPercent}%`}
                   </span>
                 </td>
                 <td>
@@ -1365,32 +1448,120 @@
     }
 
     // Load Incident Archive
+    const PAGE_SIZE = 25;
+    let incidentsAll = [];
+    let staffDirectoryAll = [];
+
+    async function loadStaffDirectory() {
+      const table = document.getElementById('staffDirectoryTableBody');
+      table.innerHTML = '<tr><td colspan="4" class="table-empty-msg">Loading staff directory...</td></tr>';
+      try {
+        const res = await fetch('/api/staff-directory');
+        const data = await res.json();
+        staffDirectoryAll = data.staff || [];
+        renderStaffDirectoryPage(1);
+      } catch (e) {
+        table.innerHTML = '<tr><td colspan="4" class="table-empty-msg">Error loading staff directory.</td></tr>';
+      }
+    }
+
+    function renderStaffDirectoryPage(page) {
+      const table = document.getElementById('staffDirectoryTableBody');
+      const pagination = document.getElementById('staffDirectoryPagination');
+      const term = (document.getElementById('staffDirectorySearchInput').value || '').trim().toLowerCase();
+
+      const filtered = term
+        ? staffDirectoryAll.filter(s => [s.robloxUsername, s.rank].some(field => String(field || '').toLowerCase().includes(term)))
+        : staffDirectoryAll;
+
+      if (filtered.length === 0) {
+        table.innerHTML = `<tr><td colspan="4" class="table-empty-msg">${staffDirectoryAll.length === 0 ? 'No staff members tracked yet.' : 'No staff match that search.'}</td></tr>`;
+        pagination.innerHTML = '';
+        return;
+      }
+
+      const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+      const currentPage = Math.min(Math.max(1, page), totalPages);
+      const pageRows = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
+      table.innerHTML = pageRows.map(s => `
+        <tr>
+          <td><strong>${escapeHtml(s.robloxUsername)}</strong></td>
+          <td>${escapeHtml(s.rank)}</td>
+          <td style="font-family: monospace; font-size: 11px;">${escapeHtml(s.userId)}</td>
+          <td style="font-size: 10.5px;">${s.lastActive ? new Date(s.lastActive).toLocaleString() : 'N/A'}</td>
+        </tr>
+      `).join('');
+
+      pagination.innerHTML = `
+        <span>Showing ${pageRows.length} of ${filtered.length} ${filtered.length === 1 ? 'staff member' : 'staff members'}${term ? ' (filtered)' : ''}</span>
+        <span style="display: flex; align-items: center; gap: 8px;">
+          <button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 3px 8px;" ${currentPage <= 1 ? 'disabled' : ''} onclick="renderStaffDirectoryPage(${currentPage - 1})">[ &laquo; PREV ]</button>
+          Page ${currentPage} of ${totalPages}
+          <button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 3px 8px;" ${currentPage >= totalPages ? 'disabled' : ''} onclick="renderStaffDirectoryPage(${currentPage + 1})">[ NEXT &raquo; ]</button>
+        </span>
+      `;
+    }
+
     async function loadIncidents() {
       const table = document.getElementById('incidentsTableBody');
       table.innerHTML = '<tr><td colspan="6" class="table-empty-msg">Loading incidents...</td></tr>';
       try {
         const res = await fetch('/api/officer/incidents');
         const data = await res.json();
-        if (!data.incidents || data.incidents.length === 0) {
-          table.innerHTML = '<tr><td colspan="6" class="table-empty-msg">No incident reports recorded yet.</td></tr>';
-        } else {
-          table.innerHTML = data.incidents.map(inc => `
-            <tr>
-              <td style="font-family: monospace; font-weight: bold; color: #9E2A2B;">${escapeHtml(inc.id)}</td>
-              <td style="font-size: 10.5px;">${new Date(inc.timestamp).toLocaleString()}</td>
-              <td><strong>${escapeHtml(inc.officer)}</strong> <span style="font-size: 10px; color: #666;">(${escapeHtml(inc.rank)})</span></td>
-              <td>${escapeHtml(inc.location)}</td>
-              <td><span class="status-pill status-pill-blue">${escapeHtml(inc.action)}</span></td>
-              <td style="max-width: 250px; overflow-wrap: break-word;">${escapeHtml(inc.summary)}</td>
-            </tr>
-          `).join('');
-        }
+        incidentsAll = data.incidents || [];
+        renderIncidentsPage(1);
       } catch (e) {
         table.innerHTML = '<tr><td colspan="6" class="table-empty-msg">Error loading incidents archive.</td></tr>';
       }
     }
 
+    function renderIncidentsPage(page) {
+      const table = document.getElementById('incidentsTableBody');
+      const pagination = document.getElementById('incidentsPagination');
+      const term = (document.getElementById('incidentsSearchInput').value || '').trim().toLowerCase();
+
+      const filtered = term
+        ? incidentsAll.filter(inc => [inc.id, inc.officer, inc.location, inc.action, inc.summary]
+            .some(field => String(field || '').toLowerCase().includes(term)))
+        : incidentsAll;
+
+      if (filtered.length === 0) {
+        table.innerHTML = `<tr><td colspan="6" class="table-empty-msg">${incidentsAll.length === 0 ? 'No incident reports recorded yet.' : 'No incidents match that search.'}</td></tr>`;
+        pagination.innerHTML = '';
+        return;
+      }
+
+      const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+      const currentPage = Math.min(Math.max(1, page), totalPages);
+      const pageRows = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
+      table.innerHTML = pageRows.map(inc => `
+        <tr>
+          <td style="font-family: monospace; font-weight: bold; color: #9E2A2B;">${escapeHtml(inc.id)}</td>
+          <td style="font-size: 10.5px;">${new Date(inc.timestamp).toLocaleString()}</td>
+          <td><strong>${escapeHtml(inc.officer)}</strong> <span style="font-size: 10px; color: #666;">(${escapeHtml(inc.rank)})</span></td>
+          <td>${escapeHtml(inc.location)}</td>
+          <td><span class="status-pill status-pill-blue">${escapeHtml(inc.action)}</span></td>
+          <td style="max-width: 250px; overflow-wrap: break-word;">
+            ${escapeHtml(inc.summary)}
+            ${inc.evidenceLink ? `<div style="margin-top: 4px;"><a href="${inc.evidenceLink}" target="_blank" rel="noopener" style="font-size: 10px;">[ VIEW EVIDENCE ]</a></div>` : ''}
+          </td>
+        </tr>
+      `).join('');
+
+      pagination.innerHTML = `
+        <span>Showing ${pageRows.length} of ${filtered.length} ${filtered.length === 1 ? 'result' : 'results'}${term ? ' (filtered)' : ''}</span>
+        <span style="display: flex; align-items: center; gap: 8px;">
+          <button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 3px 8px;" ${currentPage <= 1 ? 'disabled' : ''} onclick="renderIncidentsPage(${currentPage - 1})">[ &laquo; PREV ]</button>
+          Page ${currentPage} of ${totalPages}
+          <button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 3px 8px;" ${currentPage >= totalPages ? 'disabled' : ''} onclick="renderIncidentsPage(${currentPage + 1})">[ NEXT &raquo; ]</button>
+        </span>
+      `;
+    }
+
     const iaReportsStore = new Map();
+    let iaReportsAll = [];
 
     // Load IA Reports
     async function loadIAReports() {
@@ -1401,39 +1572,71 @@
       try {
         const res = await fetch('/api/ia/reports');
         const data = await res.json();
-        if (!data.reports || data.reports.length === 0) {
-          table.innerHTML = '<tr><td colspan="8" class="table-empty-msg">No citizen complaints or commendations filed.</td></tr>';
-        } else {
-          data.reports.forEach(rep => iaReportsStore.set(rep.id, rep));
-          table.innerHTML = data.reports.map(rep => {
-            let statusPill = 'status-pill-blue';
-            if (rep.status === 'Resolved - Action Taken') statusPill = 'status-pill-green';
-            if (rep.status === 'Unfounded / Dismissed') statusPill = 'status-pill-red';
-            if (rep.status === 'New') statusPill = 'status-pill-yellow';
-
-            const typePill = rep.type === 'Misconduct' ? 'status-pill-red' : 'status-pill-blue';
-
-            return `
-              <tr>
-                <td style="font-family: monospace; font-weight: bold;">${escapeHtml(rep.id)}</td>
-                <td><span class="status-pill ${typePill}">${escapeHtml(rep.type)}</span></td>
-                <td>${escapeHtml(rep.citizen)}</td>
-                <td><strong>${escapeHtml(rep.officer)}</strong></td>
-                <td>${escapeHtml(rep.location)}</td>
-                <td style="font-size: 10.5px;">${new Date(rep.timestamp).toLocaleDateString()}</td>
-                <td><span class="status-pill ${statusPill}">${escapeHtml(rep.status || 'New')}</span></td>
-                <td>
-                  <button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 4px 8px;" onclick="openIAReview('${escapeHtml(rep.id)}')">
-                    [ ADJUDICATE ]
-                  </button>
-                </td>
-              </tr>
-            `;
-          }).join('');
-        }
+        iaReportsAll = data.reports || [];
+        iaReportsAll.forEach(rep => iaReportsStore.set(rep.id, rep));
+        renderIAReportsPage(1);
       } catch (e) {
         table.innerHTML = '<tr><td colspan="8" class="table-empty-msg">Error loading Internal Affairs docket.</td></tr>';
       }
+    }
+
+    function renderIAReportsPage(page) {
+      const table = document.getElementById('iaReportsTableBody');
+      const pagination = document.getElementById('iaReportsPagination');
+      const term = (document.getElementById('iaSearchInput').value || '').trim().toLowerCase();
+      const statusFilter = document.getElementById('iaStatusFilter').value;
+
+      let filtered = iaReportsAll;
+      if (statusFilter) filtered = filtered.filter(rep => (rep.status || 'New') === statusFilter);
+      if (term) {
+        filtered = filtered.filter(rep => [rep.id, rep.citizen, rep.officer, rep.location]
+          .some(field => String(field || '').toLowerCase().includes(term)));
+      }
+
+      if (filtered.length === 0) {
+        table.innerHTML = `<tr><td colspan="8" class="table-empty-msg">${iaReportsAll.length === 0 ? 'No citizen complaints or commendations filed.' : 'No cases match that search/filter.'}</td></tr>`;
+        pagination.innerHTML = '';
+        return;
+      }
+
+      const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+      const currentPage = Math.min(Math.max(1, page), totalPages);
+      const pageRows = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
+      table.innerHTML = pageRows.map(rep => {
+        let statusPill = 'status-pill-blue';
+        if (rep.status === 'Resolved - Action Taken') statusPill = 'status-pill-green';
+        if (rep.status === 'Unfounded / Dismissed') statusPill = 'status-pill-red';
+        if (rep.status === 'New') statusPill = 'status-pill-yellow';
+
+        const typePill = rep.type === 'Misconduct' ? 'status-pill-red' : 'status-pill-blue';
+
+        return `
+          <tr>
+            <td style="font-family: monospace; font-weight: bold;">${escapeHtml(rep.id)}</td>
+            <td><span class="status-pill ${typePill}">${escapeHtml(rep.type)}</span></td>
+            <td>${escapeHtml(rep.citizen)}</td>
+            <td><strong>${escapeHtml(rep.officer)}</strong></td>
+            <td>${escapeHtml(rep.location)}</td>
+            <td style="font-size: 10.5px;">${new Date(rep.timestamp).toLocaleDateString()}</td>
+            <td><span class="status-pill ${statusPill}">${escapeHtml(rep.status || 'New')}</span></td>
+            <td>
+              <button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 4px 8px;" onclick="openIAReview('${escapeHtml(rep.id)}')">
+                [ ADJUDICATE ]
+              </button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      pagination.innerHTML = `
+        <span>Showing ${pageRows.length} of ${filtered.length} ${filtered.length === 1 ? 'case' : 'cases'}${term || statusFilter ? ' (filtered)' : ''}</span>
+        <span style="display: flex; align-items: center; gap: 8px;">
+          <button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 3px 8px;" ${currentPage <= 1 ? 'disabled' : ''} onclick="renderIAReportsPage(${currentPage - 1})">[ &laquo; PREV ]</button>
+          Page ${currentPage} of ${totalPages}
+          <button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 3px 8px;" ${currentPage >= totalPages ? 'disabled' : ''} onclick="renderIAReportsPage(${currentPage + 1})">[ NEXT &raquo; ]</button>
+        </span>
+      `;
     }
 
     function openIAReview(reportId) {
@@ -1445,6 +1648,13 @@
       document.getElementById('iaCaseNarrative').innerText = rep.report;
       document.getElementById('iaCaseOfficer').innerText = rep.officer;
       document.getElementById('iaCaseLoc').innerText = rep.location;
+      const evidenceRow = document.getElementById('iaCaseEvidenceRow');
+      if (rep.evidenceLink) {
+        document.getElementById('iaCaseEvidenceLink').href = rep.evidenceLink;
+        evidenceRow.style.display = 'block';
+      } else {
+        evidenceRow.style.display = 'none';
+      }
       document.getElementById('iaStatusSelect').value = rep.status || 'Under Review';
       document.getElementById('iaFindingsText').value = rep.findings || '';
       document.getElementById('iaReviewPanel').scrollIntoView({ behavior: 'smooth' });
@@ -1647,17 +1857,17 @@
 
     async function loadRolePermissions() {
       const tbody = document.getElementById('rolePermissionsTableBody');
-      tbody.innerHTML = '<tr><td colspan="5" class="table-empty-msg">Loading roles from Discord...</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" class="table-empty-msg">Loading roles from Discord...</td></tr>';
       try {
         const res = await fetch('/api/admin/roles');
         const data = await res.json();
         if (!res.ok) {
-          tbody.innerHTML = '<tr><td colspan="5" class="table-empty-msg">' + escapeHtml(data.error || 'Failed to load roles.') + '</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="6" class="table-empty-msg">' + escapeHtml(data.error || 'Failed to load roles.') + '</td></tr>';
           return;
         }
         rolePermissionsData = data.roles;
         if (rolePermissionsData.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="5" class="table-empty-msg">No assignable roles found in the server.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="6" class="table-empty-msg">No assignable roles found in the server.</td></tr>';
           return;
         }
         tbody.innerHTML = rolePermissionsData.map(r => `
@@ -1670,10 +1880,11 @@
             <td style="text-align: center;"><input type="checkbox" class="role-perm-supervisor" ${r.isSupervisor ? 'checked' : ''} /></td>
             <td style="text-align: center;"><input type="checkbox" class="role-perm-command" ${r.isCommand ? 'checked' : ''} /></td>
             <td style="text-align: center;"><input type="checkbox" class="role-perm-ia" ${r.isInternalAffairs ? 'checked' : ''} /></td>
+            <td style="text-align: center;"><input type="number" min="0" step="5" class="role-perm-quota" style="width: 70px; text-align: center;" value="${Math.round((r.weeklyQuotaSeconds || 0) / 60)}" /></td>
           </tr>
         `).join('');
       } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="5" class="table-empty-msg">Network error loading roles.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" class="table-empty-msg">Network error loading roles.</td></tr>';
       }
     }
 
@@ -1692,7 +1903,8 @@
           enabled: row.querySelector('.role-perm-enabled').checked,
           isSupervisor: row.querySelector('.role-perm-supervisor').checked,
           isCommand: row.querySelector('.role-perm-command').checked,
-          isInternalAffairs: row.querySelector('.role-perm-ia').checked
+          isInternalAffairs: row.querySelector('.role-perm-ia').checked,
+          weeklyQuotaSeconds: Math.max(0, Math.round(Number(row.querySelector('.role-perm-quota').value) || 0)) * 60
         };
       });
 

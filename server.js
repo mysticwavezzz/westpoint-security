@@ -20,6 +20,7 @@ const robloxService = require('./lib/robloxService.js');
 const r2 = require('./lib/r2.js');
 const video = require('./lib/video.js');
 const videoLog = require('./lib/videoLog.js');
+const { REST: DiscordREST, Routes: DiscordRoutes } = require('discord.js');
 // Shared with the Discord bot (resilient-meitner). That bot currently only
 // runs on this machine, so this only resolves where the bot's SQLite file is
 // actually reachable on disk — override with BOT_DB_PATH in .env for any
@@ -194,7 +195,11 @@ function getRoleConfig() {
       enabled: true,
       isSupervisor: !!cfg.isSupervisor || !!cfg.isCommand,
       isCommand: !!cfg.isCommand,
-      isInternalAffairs: !!cfg.isInternalAffairs || !!cfg.isCommand
+      isInternalAffairs: !!cfg.isInternalAffairs || !!cfg.isCommand,
+      // 900s (15min) matches the bot's previous single global
+      // WEEKLY_QUOTA_SECONDS constant, so a fresh deploy behaves exactly as
+      // it always did until Command customizes a role's target.
+      weeklyQuotaSeconds: 900
     };
   });
   writeJSONFile('role-permissions.json', seeded);
@@ -234,10 +239,16 @@ function computePermissionsFromDiscordRoles(discordRoleIds) {
     .sort((a, b) => (b.position || 0) - (a.position || 0))
     .map(r => r.displayName);
 
+  // A member holding multiple roles is held to the HIGHEST target among
+  // them - e.g. a Captain who also holds a base Officer role shouldn't get
+  // to coast on the lower bar just because they still hold that role too.
+  const quotaTargetSeconds = matched.reduce((max, r) => Math.max(max, Number(r.weeklyQuotaSeconds) || 0), 0);
+
   return {
     permissions: { isOfficer, isSupervisor, isCommand, isInternalAffairs, tier, tierLabel },
     roles: roleNames,
-    highestRank: roleNames[0] || null
+    highestRank: roleNames[0] || null,
+    quotaTargetSeconds
   };
 }
 
@@ -384,6 +395,12 @@ function getBotDb() {
     } catch (e) {}
     try {
       botDbInstance.exec('ALTER TABLE shift_history ADD COLUMN shift_number INTEGER');
+    } catch (e) {}
+    try {
+      botDbInstance.exec('ALTER TABLE staff_members ADD COLUMN quota_target_seconds INTEGER');
+    } catch (e) {}
+    try {
+      botDbInstance.exec('ALTER TABLE staff_members ADD COLUMN last_known_rank TEXT');
     } catch (e) {}
     return botDbInstance;
   } catch (e) {
@@ -568,6 +585,64 @@ function postDiscordMessage(channelId, embed) {
   });
 }
 
+// Uploads citizen/officer-submitted evidence (photos, PDFs, etc, sent from
+// the browser as base64 data URLs) to Discord and returns a link to the
+// message they land in - same "Discord as file host" pattern already used
+// for bodycam video (see lib/videoLog.js), just for one-off evidence
+// instead of a whole shift recording. Caps per-file and total file count
+// well under Discord's real upload ceiling for this bot (~21MB - see
+// lib/videoLog.js) since evidence is expected to be a couple of photos, not
+// bulk data.
+async function uploadEvidenceToDiscord(evidenceItems, embedTitle, embedFields) {
+  if (!Array.isArray(evidenceItems) || evidenceItems.length === 0 || !DISCORD_BOT_TOKEN) return null;
+  const MAX_FILES = 5;
+  const MAX_FILE_BYTES = 4 * 1024 * 1024;
+  const localPaths = [];
+  try {
+    const files = [];
+    for (const item of evidenceItems.slice(0, MAX_FILES)) {
+      if (!item || typeof item.dataUrl !== 'string') continue;
+      const match = item.dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+      if (!match) continue;
+      const buffer = Buffer.from(match[2], 'base64');
+      if (buffer.length === 0 || buffer.length > MAX_FILE_BYTES) continue;
+      const ext = (String(item.name || '').match(/\.([a-zA-Z0-9]+)$/) || [, 'bin'])[1];
+      const localPath = video.tempPath(ext);
+      fs.writeFileSync(localPath, buffer);
+      localPaths.push(localPath);
+      files.push({ path: localPath, name: String(item.name || `evidence.${ext}`).slice(0, 100) });
+    }
+    if (files.length === 0) return null;
+
+    const embed = { title: embedTitle, color: 0x546675, fields: embedFields || [] };
+    const msg = await videoLog.postMessage(DISCORD_BOT_TOKEN, AUDIT_LOGS_CHANNEL_ID, { embeds: [embed] }, files);
+    return `https://discord.com/channels/${GUILD_ID}/${AUDIT_LOGS_CHANNEL_ID}/${msg.id}`;
+  } catch (e) {
+    console.error('[EVIDENCE UPLOAD ERROR]', e.message);
+    return null;
+  } finally {
+    localPaths.forEach(p => { try { fs.unlinkSync(p); } catch (e) {} });
+  }
+}
+
+// Sends a Discord DM to a citizen when their IA case resolves. Opens (or
+// reuses) a DM channel via the bot token, same as any other Discord bot -
+// a citizen can only receive this if their DMs are open to server members,
+// which is out of this app's control; a failure here is logged but never
+// blocks the actual case update from saving.
+async function dmDiscordUser(userId, content) {
+  if (!DISCORD_BOT_TOKEN || !userId) return false;
+  try {
+    const rest = new DiscordREST({ version: '10' }).setToken(DISCORD_BOT_TOKEN);
+    const dmChannel = await rest.post(DiscordRoutes.userChannels(), { body: { recipient_id: userId } });
+    await rest.post(DiscordRoutes.channelMessages(dmChannel.id), { body: { content } });
+    return true;
+  } catch (e) {
+    console.error('[DISCORD DM ERROR]', userId, e.message);
+    return false;
+  }
+}
+
 // Fetch Guild Member via Bot Token
 function fetchGuildMember(discordUserId) {
   return new Promise((resolve) => {
@@ -671,10 +746,11 @@ async function revalidateSession(sessionId, session) {
     try {
       const memRes = await fetchGuildMember(session.id);
       if (memRes.success && memRes.member) {
-        const { permissions, roles, highestRank } = computePermissionsFromDiscordRoles(memRes.member.roles || []);
+        const { permissions, roles, highestRank, quotaTargetSeconds } = computePermissionsFromDiscordRoles(memRes.member.roles || []);
         session.roles = roles;
         session.highestRank = highestRank;
         session.permissions = permissions;
+        session.quotaTargetSeconds = quotaTargetSeconds;
       }
       // On lookup failure (rate limit, network blip) keep the cached
       // permissions rather than punishing the user for a Discord hiccup.
@@ -1027,7 +1103,7 @@ const server = http.createServer(async (req, res) => {
                   // officer role to get a session at all, so a real citizen
                   // could never successfully submit a misconduct report or
                   // commendation.
-                  const { permissions: perms, roles: matchingRanks, highestRank } =
+                  const { permissions: perms, roles: matchingRanks, highestRank, quotaTargetSeconds } =
                     computePermissionsFromDiscordRoles(member ? (member.roles || []) : []);
                   // Cryptographically strong 256-bit entropy session token
                   const newSessionId = 'WP-' + crypto.randomBytes(32).toString('hex');
@@ -1039,6 +1115,7 @@ const server = http.createServer(async (req, res) => {
                     roles: matchingRanks,
                     highestRank: highestRank,
                     permissions: perms,
+                    quotaTargetSeconds: quotaTargetSeconds,
                     loginTime: new Date().toISOString(),
                     lastRoleCheck: new Date().toISOString()
                   });
@@ -1106,6 +1183,26 @@ const server = http.createServer(async (req, res) => {
     return res.end();
   }
 
+  // API: GET /api/staff-directory (Officer+ - every staff member ever
+  // tracked, not just this week's activity like /api/duty-roster's
+  // leaderboard. Rank/quota are a snapshot from each member's last duty
+  // start, not live - same staleness as roblox_username already has here,
+  // refreshed whenever they next start a shift.)
+  if (pathname === '/api/staff-directory' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+    const rows = db.prepare('SELECT * FROM staff_members ORDER BY roblox_username COLLATE NOCASE ASC').all();
+    return sendJSON(res, 200, {
+      staff: rows.map(r => ({
+        userId: r.user_id,
+        robloxUsername: r.roblox_username || 'Unknown',
+        rank: r.last_known_rank || 'Unranked',
+        lastActive: r.updated_at
+      }))
+    });
+  }
+
   // 5. API: GET /api/duty-roster (Real-time in-game autolog sessions & weekly stats from bot.db)
   if (pathname === '/api/duty-roster') {
     if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
@@ -1141,7 +1238,8 @@ const server = http.createServer(async (req, res) => {
         const topWeekly = db.prepare(`
           SELECT sh.user_id,
                  COALESCE(wt.total_seconds, 0) AS total_seconds,
-                 COALESCE(s.roblox_username, sh.roblox_username) AS roblox_username
+                 COALESCE(s.roblox_username, sh.roblox_username) AS roblox_username,
+                 s.quota_target_seconds AS quota_target_seconds
           FROM (SELECT DISTINCT user_id, roblox_username FROM shift_history WHERE week_key = ?) sh
           LEFT JOIN weekly_totals wt ON wt.user_id = sh.user_id AND wt.week_key = ?
           LEFT JOIN staff_members s ON s.user_id = sh.user_id
@@ -1150,11 +1248,18 @@ const server = http.createServer(async (req, res) => {
         `).all(weekKey, weekKey);
 
         topWeekly.forEach(row => {
+          // Falls back to the app-wide 900s (15min) default for anyone whose
+          // staff_members row predates this feature or was never set.
+          const quotaTarget = Number.isFinite(row.quota_target_seconds) ? row.quota_target_seconds : 900;
           leaderboard.push({
             userId: row.user_id,
             robloxUsername: row.roblox_username || 'Officer',
             totalSeconds: row.total_seconds,
-            totalFormatted: formatDuration(row.total_seconds)
+            totalFormatted: formatDuration(row.total_seconds),
+            quotaTargetSeconds: quotaTarget,
+            quotaTargetFormatted: formatDuration(quotaTarget),
+            quotaMet: row.total_seconds >= quotaTarget,
+            quotaPercent: quotaTarget > 0 ? Math.min(999, Math.round((row.total_seconds / quotaTarget) * 100)) : 100
           });
         });
       } catch (dbErr) {
@@ -1200,7 +1305,7 @@ const server = http.createServer(async (req, res) => {
   // 7. API: POST /api/officer/incident
   if (pathname === '/api/officer/incident' && req.method === 'POST') {
     if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
-    const body = await parseBody(req);
+    const body = await parseBody(req, 8 * 1024 * 1024); // raised from the 64KB default - evidence photos are sent as base64 in this same JSON body
     const incident = {
       id: 'INC-' + Math.floor(100000 + Math.random() * 900000),
       officer: currentSession.displayName,
@@ -1210,8 +1315,14 @@ const server = http.createServer(async (req, res) => {
       suspect: body.suspect || 'N/A',
       action: body.action || 'Standard Patrol Action',
       summary: body.summary || '',
+      evidenceLink: null,
       timestamp: new Date().toISOString()
     };
+
+    incident.evidenceLink = await uploadEvidenceToDiscord(body.evidence, `Evidence: Incident ${incident.id}`, [
+      { name: 'Officer', value: incident.officer, inline: true },
+      { name: 'Location', value: incident.location, inline: true }
+    ]);
 
     const incidents = readJSONFile('incidents.json', []);
     incidents.unshift(incident);
@@ -1227,7 +1338,7 @@ const server = http.createServer(async (req, res) => {
         error: 'Authentication Required: You must be signed in with Discord to submit a report or commendation.'
       });
     }
-    const body = await parseBody(req);
+    const body = await parseBody(req, 8 * 1024 * 1024); // raised from the 64KB default - evidence photos are sent as base64 in this same JSON body
     const rawReport = String(body.report || '').trim();
     if (!rawReport) {
       return sendJSON(res, 400, { error: 'Please provide statement details.' });
@@ -1244,8 +1355,14 @@ const server = http.createServer(async (req, res) => {
       status: 'New',
       assignedIA: null,
       findings: '',
+      evidenceLink: null,
       timestamp: new Date().toISOString()
     };
+
+    report.evidenceLink = await uploadEvidenceToDiscord(body.evidence, `Evidence: Case ${report.id}`, [
+      { name: 'Type', value: report.type, inline: true },
+      { name: 'Reported Officer', value: report.officer, inline: true }
+    ]);
 
     const reports = readJSONFile('reports.json', []);
     reports.unshift(report);
@@ -1337,12 +1454,25 @@ const server = http.createServer(async (req, res) => {
     const target = reports.find(r => r.id === body.reportId);
     if (!target) return sendJSON(res, 404, { error: 'Report not found' });
 
+    const previousStatus = target.status;
     target.status = body.status || target.status;
     target.findings = body.findings !== undefined ? body.findings : target.findings;
     target.assignedIA = currentSession.displayName;
     target.updatedAt = new Date().toISOString();
 
     writeJSONFile('reports.json', reports);
+
+    // DM the citizen who filed it once their case actually resolves - only
+    // on the transition into a resolved state, not every edit an IA agent
+    // makes while it's still under review (which would spam them).
+    const RESOLVED_STATUSES = ['Resolved - Action Taken', 'Unfounded / Dismissed'];
+    if (RESOLVED_STATUSES.includes(target.status) && target.status !== previousStatus && target.reporterId) {
+      await dmDiscordUser(
+        target.reporterId,
+        `Your Westpoint Security case **${target.id}** has been updated.\n\n**Status:** ${target.status}\n\nYou can check its status anytime at https://westpointsecurity.xyz/contact using your case number.`
+      );
+    }
+
     return sendJSON(res, 200, { success: true, record: target });
   }
 
@@ -1568,7 +1698,8 @@ const server = http.createServer(async (req, res) => {
           enabled: !!c.enabled,
           isSupervisor: !!c.isSupervisor,
           isCommand: !!c.isCommand,
-          isInternalAffairs: !!c.isInternalAffairs
+          isInternalAffairs: !!c.isInternalAffairs,
+          weeklyQuotaSeconds: Number(c.weeklyQuotaSeconds) || 0
         };
       })
       .sort((a, b) => b.position - a.position);
@@ -1594,7 +1725,8 @@ const server = http.createServer(async (req, res) => {
         enabled: !!r.enabled,
         isSupervisor: !!r.isSupervisor,
         isCommand: !!r.isCommand,
-        isInternalAffairs: !!r.isInternalAffairs
+        isInternalAffairs: !!r.isInternalAffairs,
+        weeklyQuotaSeconds: Math.max(0, Math.round(Number(r.weeklyQuotaSeconds)) || 0)
       };
     });
     writeJSONFile('role-permissions.json', config);
@@ -1668,13 +1800,15 @@ const server = http.createServer(async (req, res) => {
     const startTime = Date.now();
     try {
       db.prepare(`
-        INSERT INTO staff_members (user_id, roblox_id, roblox_username, updated_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO staff_members (user_id, roblox_id, roblox_username, quota_target_seconds, last_known_rank, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET
           roblox_id = COALESCE(excluded.roblox_id, staff_members.roblox_id),
           roblox_username = COALESCE(excluded.roblox_username, staff_members.roblox_username),
+          quota_target_seconds = excluded.quota_target_seconds,
+          last_known_rank = excluded.last_known_rank,
           updated_at = excluded.updated_at
-      `).run(currentSession.id, String(verification.robloxId), verification.robloxUsername, startTime);
+      `).run(currentSession.id, String(verification.robloxId), verification.robloxUsername, currentSession.quotaTargetSeconds || 0, currentSession.highestRank || null, startTime);
 
       db.prepare(`
         INSERT INTO active_sessions (user_id, roblox_id, roblox_username, start_time)

@@ -185,6 +185,9 @@
                   <label>Incident Narrative &amp; Statement:
                     <textarea name="narrative" required placeholder="Detail the events, actions observed, and any relevant times or context..."></textarea>
                   </label>
+                  <label>Evidence (photos/screenshots, optional, up to 5 files, 4MB each):
+                    <input type="file" name="evidenceFiles" accept="image/*,.pdf" multiple />
+                  </label>
                 </fieldset>
                 <div style="margin-top: 10px;">
                   <button type="submit" class="period-button" id="btnSubmitReport">[ SUBMIT TO INTERNAL AFFAIRS ]</button>
@@ -201,6 +204,19 @@
 
         function escapeHtml(str) {
           return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        // Reads a FileList into [{name, dataUrl}] for endpoints that accept
+        // evidence as base64 within the normal JSON body (see
+        // uploadEvidenceToDiscord in server.js) rather than multipart/form-data.
+        function filesToDataUrls(fileList) {
+          const files = Array.from(fileList || []).slice(0, 5);
+          return Promise.all(files.map(file => new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve({ name: file.name, dataUrl: reader.result });
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          })));
         }
 
         async function lookupReportStatus(e) {
@@ -345,7 +361,8 @@
             type: form.submissionType.value,
             officer: form.officerName.value,
             location: form.location.value,
-            report: form.narrative.value
+            report: form.narrative.value,
+            evidence: await filesToDataUrls(form.evidenceFiles.files)
           };
 
           try {
