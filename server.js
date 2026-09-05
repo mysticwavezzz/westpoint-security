@@ -1,4 +1,3 @@
-const logger = require('./lib/logger.js');
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
@@ -17,12 +16,6 @@ const PUBLIC_DIR = fs.existsSync(path.join(BASE_DIR, 'public')) ? path.join(BASE
 // sessions/reports/incidents survive redeploys instead of living on the
 // container's ephemeral disk, which gets wiped on every deploy otherwise.
 const DATA_DIR = process.env.DATA_DIR || path.join(BASE_DIR, 'data');
-let webpush = null;
-try {
-  webpush = require('web-push');
-} catch (e) {
-  console.warn('[WEB-PUSH] web-push package not loaded');
-}
 const robloxService = require('./lib/robloxService.js');
 const r2 = require('./lib/r2.js');
 const video = require('./lib/video.js');
@@ -33,55 +26,6 @@ const { REST: DiscordREST, Routes: DiscordRoutes } = require('discord.js');
 // actually reachable on disk — override with BOT_DB_PATH in .env for any
 // other host (e.g. if the bot and portal are later deployed to the same box).
 const BOT_DB_PATH = process.env.BOT_DB_PATH || 'C:/Users/Nolan/Documents/antigravity/resilient-meitner/bot.db';
-
-
-let vapidKeys = null;
-function getVapidKeys() {
-  if (vapidKeys) return vapidKeys;
-  const vapidFile = path.join(DATA_DIR, 'vapid.json');
-  if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
-    vapidKeys = {
-      publicKey: process.env.VAPID_PUBLIC_KEY,
-      privateKey: process.env.VAPID_PRIVATE_KEY
-    };
-  } else if (fs.existsSync(vapidFile)) {
-    try {
-      vapidKeys = JSON.parse(fs.readFileSync(vapidFile, 'utf8'));
-    } catch (e) {}
-  }
-  if (!vapidKeys || !vapidKeys.publicKey) {
-    if (webpush && typeof webpush.generateVAPIDKeys === 'function') {
-      vapidKeys = webpush.generateVAPIDKeys();
-      try {
-        if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-        fs.writeFileSync(vapidFile, JSON.stringify(vapidKeys, null, 2), 'utf8');
-      } catch (e) {}
-    } else {
-      vapidKeys = {
-        publicKey: 'BNxM_SAMPLE_KEY_WESTPOINT_PUBLIC_VAPID_OVERRIDE_KEY',
-        privateKey: 'SAMPLE_PRIVATE_KEY'
-      };
-    }
-  }
-  if (webpush && vapidKeys.publicKey && vapidKeys.privateKey && !vapidKeys.publicKey.startsWith('BNxM_SAMPLE')) {
-    try {
-      webpush.setVapidDetails(
-        'mailto:admin@westpointsecurity.xyz',
-        vapidKeys.publicKey,
-        vapidKeys.privateKey
-      );
-    } catch (e) {}
-  }
-  return vapidKeys;
-}
-
-const FTO_STAGES = [
-  'Orientation & Equipment',
-  'Radio & Code Protocols',
-  'Vehicle & Patrol Procedures',
-  'Incident Documentation & Evidence',
-  'Solo Patrol Readiness'
-];
 
 // Simple .env Loader
 function loadEnv() {
@@ -132,43 +76,6 @@ let VIDEO_LOG_PARENT_ID = process.env.VIDEO_LOG_PARENT_ID || '154553786467733110
 // Applied once at startup, right after loadEnv() below - overwrites the
 // `let` defaults above with anything Command has saved via the Admin
 // Channel Config panel.
-
-const ACTION_CONFIRMATION_CODES = new Map();
-
-async function backupDatabaseToR2() {
-  const db = getBotDb();
-  if (!db) return null;
-  const timestampStr = new Date().toISOString().replace(/[:.]/g, '-');
-  const tempBackupPath = path.join(DATA_DIR, `backup-${timestampStr}.db`);
-  try {
-    if (fs.existsSync(tempBackupPath)) fs.unlinkSync(tempBackupPath);
-    db.prepare(`VACUUM INTO '${tempBackupPath.replace(/\\/g, '/')}'`).run();
-
-    const backupBytes = fs.statSync(tempBackupPath).size;
-    const r2Key = `backups/bot-backup-${timestampStr}.db`;
-
-    if (r2.isConfigured()) {
-      const fileBuffer = fs.readFileSync(tempBackupPath);
-      await r2.putObject(r2Key, fileBuffer, 'application/x-sqlite3');
-      logger.info('Automated database snapshot uploaded to R2', { r2Key, bytes: backupBytes });
-      try { fs.unlinkSync(tempBackupPath); } catch (e) {}
-      return { success: true, backupKey: r2Key, bytes: backupBytes, timestamp: new Date().toISOString() };
-    } else {
-      logger.info('Database snapshot created locally (R2 not configured)', { path: tempBackupPath, bytes: backupBytes });
-      return { success: true, backupKey: tempBackupPath, bytes: backupBytes, timestamp: new Date().toISOString(), localOnly: true };
-    }
-  } catch (err) {
-    logger.error('Failed to snapshot database', {}, err);
-    try { if (fs.existsSync(tempBackupPath)) fs.unlinkSync(tempBackupPath); } catch (e) {}
-    throw err;
-  }
-}
-
-// Automated daily database backup
-setInterval(() => {
-  backupDatabaseToR2().catch(e => logger.error('Daily automated backup failed', {}, e));
-}, 24 * 60 * 60 * 1000);
-
 function loadChannelConfigOverrides() {
   const saved = readJSONFile('channel-config.json', null);
   if (!saved) return;
@@ -240,7 +147,7 @@ const SECURITY_HEADERS = {
   // bodycam chunks and playback are fetched directly from presigned R2 URLs,
   // not proxied through this server - without this the browser silently
   // blocks every one of those requests as a CSP violation.
-  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' https://discord.com https://cdn.discordapp.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: https://cdn.discordapp.com; font-src 'self'; media-src 'self' blob: https://*.r2.cloudflarestorage.com; connect-src 'self' https://discord.com https://*.roblox.com https://*.r2.cloudflarestorage.com; frame-ancestors 'none';"
+  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' https://discord.com https://cdn.discordapp.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://cdn.discordapp.com; font-src 'self'; media-src 'self' blob: https://*.r2.cloudflarestorage.com; connect-src 'self' https://discord.com https://*.roblox.com https://*.r2.cloudflarestorage.com; frame-ancestors 'none';"
 };
 
 // In-memory active officer web sessions
@@ -410,10 +317,7 @@ const ROUTE_VIEWS = {
   '/employee': 'employee.html',
   '/employee/dashboard': 'employee-dashboard.html',
   '/site-map': 'site-map.html',
-  '/blotter': 'blotter.html',
-  '/transparency': 'transparency.html',
-  '/employee/api-docs': 'api-docs.html',
-  '/api/docs': 'api-docs.html'
+  '/blotter': 'blotter.html'
 };
 
 function serveViewFile(res, filename) {
@@ -499,51 +403,6 @@ function getBotDb() {
         channel_id TEXT NOT NULL,
         created_at INTEGER NOT NULL
       );
-      
-      CREATE TABLE IF NOT EXISTS fto_assignments (
-        id TEXT PRIMARY KEY,
-        trainee_id TEXT NOT NULL,
-        trainee_username TEXT,
-        trainer_id TEXT NOT NULL,
-        trainer_username TEXT,
-        assigned_at INTEGER NOT NULL,
-        status TEXT NOT NULL DEFAULT 'active',
-        assigned_by TEXT
-      );
-      CREATE TABLE IF NOT EXISTS fto_signoffs (
-        id TEXT PRIMARY KEY,
-        trainee_id TEXT NOT NULL,
-        stage TEXT NOT NULL,
-        signed_off_by TEXT NOT NULL,
-        signed_off_by_id TEXT,
-        signed_off_at INTEGER NOT NULL,
-        notes TEXT
-      );
-      CREATE TABLE IF NOT EXISTS staff_flags (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        flag_type TEXT NOT NULL,
-        label TEXT NOT NULL,
-        reason TEXT,
-        created_by TEXT,
-        created_at INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS push_subscriptions (
-        endpoint TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        keys_p256dh TEXT NOT NULL,
-        keys_auth TEXT NOT NULL,
-        created_at INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS bodycam_reviews (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        reviewer_id TEXT NOT NULL,
-        reviewer_name TEXT NOT NULL,
-        status TEXT NOT NULL,
-        notes TEXT,
-        reviewed_at INTEGER NOT NULL
-      );
       CREATE TABLE IF NOT EXISTS video_channel_clears (
         week_key TEXT PRIMARY KEY,
         cleared_at INTEGER NOT NULL
@@ -571,22 +430,6 @@ function getBotDb() {
     try {
       botDbInstance.exec('ALTER TABLE staff_members ADD COLUMN last_known_rank TEXT');
     } catch (e) {}
-    try {
-      botDbInstance.exec('ALTER TABLE bodycam_sessions ADD COLUMN tags TEXT');
-    } catch (e) {}
-    try {
-      botDbInstance.exec('ALTER TABLE bodycam_sessions ADD COLUMN review_status TEXT DEFAULT "unreviewed"');
-    } catch (e) {}
-    try {
-      botDbInstance.exec('ALTER TABLE bodycam_sessions ADD COLUMN review_notes TEXT');
-    } catch (e) {}
-    try {
-      botDbInstance.exec('ALTER TABLE bodycam_sessions ADD COLUMN reviewed_by TEXT');
-    } catch (e) {}
-    try {
-      botDbInstance.exec('ALTER TABLE bodycam_sessions ADD COLUMN reviewed_at INTEGER');
-    } catch (e) {}
-
     return botDbInstance;
   } catch (e) {
     console.error('[DATABASE CONNECT ERROR]', e.message);
@@ -1250,7 +1093,7 @@ const server = http.createServer(async (req, res) => {
     // page to send the browser back to - contact.html and employee.html both
     // link here, and a citizen signing in from Contact shouldn't get bounced
     // to the employee login page just because they don't hold a staff role.
-    const next = ['employee', 'contact', 'careers'].includes(parsedUrl.query.next) ? parsedUrl.query.next : 'contact';
+    const next = ['employee', 'contact'].includes(parsedUrl.query.next) ? parsedUrl.query.next : 'contact';
     const discordAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${DISCORD_CLIENT_ID}&redirect_uri=${encodeURIComponent(getRedirectUri(req))}&response_type=code&scope=identify&state=${encodeURIComponent(next)}`;
     res.writeHead(302, { 'Location': discordAuthUrl });
     return res.end();
@@ -1259,7 +1102,7 @@ const server = http.createServer(async (req, res) => {
   // 2. DISCORD OAUTH2 CALLBACK
   if (pathname === '/auth/discord/callback') {
     const code = parsedUrl.query.code;
-    const next = ['employee', 'contact', 'careers'].includes(parsedUrl.query.state) ? parsedUrl.query.state : 'contact';
+    const next = ['employee', 'contact'].includes(parsedUrl.query.state) ? parsedUrl.query.state : 'contact';
     if (!code) {
       res.writeHead(302, { 'Location': '/employee?error=no_code' });
       return res.end();
@@ -1346,8 +1189,6 @@ const server = http.createServer(async (req, res) => {
                   let redirectTo;
                   if (next === 'employee') {
                     redirectTo = perms.isOfficer ? '/employee/dashboard' : '/employee?error=unauthorized_role';
-                  } else if (next === 'careers') {
-                    redirectTo = '/careers';
                   } else {
                     redirectTo = '/contact';
                   }
@@ -1411,218 +1252,15 @@ const server = http.createServer(async (req, res) => {
     const db = getBotDb();
     if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
     const rows = db.prepare('SELECT * FROM staff_members ORDER BY roblox_username COLLATE NOCASE ASC').all();
-    let flagsByUser = {};
-    try {
-      const flags = db.prepare('SELECT * FROM staff_flags').all();
-      flags.forEach(f => {
-        if (!flagsByUser[f.user_id]) flagsByUser[f.user_id] = [];
-        flagsByUser[f.user_id].push({
-          id: f.id,
-          flagType: f.flag_type,
-          label: f.label,
-          reason: f.reason,
-          createdBy: f.created_by,
-          createdAt: f.created_at
-        });
-      });
-    } catch (e) {}
     return sendJSON(res, 200, {
       staff: rows.map(r => ({
         userId: r.user_id,
         robloxUsername: r.roblox_username || 'Unknown',
         rank: r.last_known_rank || 'Unranked',
-        lastActive: r.updated_at,
-        flags: flagsByUser[r.user_id] || []
+        lastActive: r.updated_at
       }))
     });
   }
-
-  // API: POST /api/bodycam/:id/tags (Tagging Clips)
-  if (pathname.startsWith('/api/bodycam/') && pathname.endsWith('/tags') && req.method === 'POST') {
-    if (!currentSession || !currentSession.permissions.isOfficer) {
-      return sendJSON(res, 401, { error: 'Unauthorized: Officer session required' });
-    }
-    const bodycamId = pathname.slice('/api/bodycam/'.length, -'/tags'.length);
-    const db = getBotDb();
-    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
-
-    const bc = db.prepare('SELECT * FROM bodycam_sessions WHERE id = ?').get(bodycamId);
-    if (!bc) return sendJSON(res, 404, { error: 'Bodycam session not found' });
-
-    if (bc.user_id !== currentSession.id && !currentSession.permissions.isSupervisor) {
-      return sendJSON(res, 403, { error: 'Access Denied: You can only tag your own bodycam recordings.' });
-    }
-
-    const body = await parseBody(req);
-    let tags = [];
-    if (Array.isArray(body.tags)) {
-      tags = body.tags.map(t => String(t).trim().toLowerCase().slice(0, 30)).filter(Boolean);
-    } else if (typeof body.tags === 'string') {
-      tags = body.tags.split(',').map(t => t.trim().toLowerCase().slice(0, 30)).filter(Boolean);
-    }
-
-    const tagsJson = JSON.stringify(tags);
-    db.prepare('UPDATE bodycam_sessions SET tags = ? WHERE id = ?').run(tagsJson, bodycamId);
-
-    return sendJSON(res, 200, { success: true, bodycamId, tags });
-  }
-
-  // API: GET /api/admin/bodycam/review-queue (Supervisor Review Queue)
-  if (pathname === '/api/admin/bodycam/review-queue' && req.method === 'GET') {
-    if (!currentSession || (!currentSession.permissions.isSupervisor && !currentSession.permissions.isInternalAffairs)) {
-      return sendJSON(res, 403, { error: 'Access Denied: Supervisor or IA rank required.' });
-    }
-    const db = getBotDb();
-    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
-
-    const statusFilter = parsedUrl.query.status || 'all';
-    let query = `
-      SELECT bs.id, bs.user_id, bs.week_key, bs.status, bs.started_at, bs.finished_at,
-             bs.duration_seconds, bs.tags, bs.review_status, bs.review_notes, bs.reviewed_by, bs.reviewed_at,
-             COALESCE(s.roblox_username, sh.roblox_username, 'Officer') as roblox_username
-      FROM bodycam_sessions bs
-      LEFT JOIN shift_history sh ON sh.bodycam_id = bs.id
-      LEFT JOIN staff_members s ON s.user_id = bs.user_id
-    `;
-
-    const params = [];
-    if (statusFilter && statusFilter !== 'all') {
-      query += ' WHERE bs.review_status = ?';
-      params.push(statusFilter);
-    }
-    query += ' ORDER BY bs.started_at DESC LIMIT 50';
-
-    const rows = db.prepare(query).all(...params);
-    const queue = rows.map(r => {
-      let tags = [];
-      try { tags = JSON.parse(r.tags || '[]'); } catch (e) {}
-      return {
-        id: r.id,
-        userId: r.user_id,
-        robloxUsername: r.roblox_username,
-        startedAt: r.started_at,
-        durationSeconds: r.duration_seconds,
-        durationFormatted: formatDuration(r.duration_seconds || 0),
-        status: r.status,
-        tags,
-        reviewStatus: r.review_status || 'unreviewed',
-        reviewNotes: r.review_notes || '',
-        reviewedBy: r.reviewed_by,
-        reviewedAt: r.reviewed_at
-      };
-    });
-
-    return sendJSON(res, 200, { queue });
-  }
-
-  // API: POST /api/bodycam/:id/review (Supervisor / IA Review Submission)
-  if (pathname.startsWith('/api/bodycam/') && pathname.endsWith('/review') && req.method === 'POST') {
-    if (!currentSession || (!currentSession.permissions.isSupervisor && !currentSession.permissions.isInternalAffairs)) {
-      return sendJSON(res, 403, { error: 'Access Denied: Supervisor or IA rank required.' });
-    }
-    const bodycamId = pathname.slice('/api/bodycam/'.length, -'/review'.length);
-    const db = getBotDb();
-    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
-
-    const bc = db.prepare('SELECT * FROM bodycam_sessions WHERE id = ?').get(bodycamId);
-    if (!bc) return sendJSON(res, 404, { error: 'Bodycam session not found' });
-
-    const body = await parseBody(req);
-    const status = ['approved', 'flagged', 'reviewed'].includes(body.status) ? body.status : 'reviewed';
-    const notes = String(body.notes || '').trim().slice(0, 1000);
-    const now = Date.now();
-
-    db.prepare(`
-      UPDATE bodycam_sessions
-      SET review_status = ?, review_notes = ?, reviewed_by = ?, reviewed_at = ?
-      WHERE id = ?
-    `).run(status, notes, currentSession.displayName, now, bodycamId);
-
-    const revId = 'REV-' + crypto.randomBytes(8).toString('hex');
-    db.prepare(`
-      INSERT INTO bodycam_reviews (id, session_id, reviewer_id, reviewer_name, status, notes, reviewed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(revId, bodycamId, currentSession.id, currentSession.displayName, status, notes, now);
-
-    // Discord Alert if flagged
-    if (status === 'flagged' && DISCORD_BOT_TOKEN) {
-      const embed = {
-        title: 'Bodycam Shift Flagged for Investigation',
-        color: 0xE74C3C,
-        description: `**Bodycam ID:** \`${bodycamId}\`\n**Officer:** <@${bc.user_id}>\n**Flagged By:** ${currentSession.displayName} (<@${currentSession.id}>)\n\n**Review Notes:**\n> ${notes || 'Requires administrative or IA review.'}`,
-        footer: { text: 'Westpoint Video Review Queue' },
-        timestamp: new Date().toISOString()
-      };
-      postDiscordMessage(AUDIT_LOGS_CHANNEL_ID, embed).catch(() => {});
-    }
-
-    return sendJSON(res, 200, { success: true, bodycamId, status });
-  }
-
-  // API: GET /api/admin/bodycam/search (Cross-officer shift & bodycam search)
-  if (pathname === '/api/admin/bodycam/search' && req.method === 'GET') {
-    if (!currentSession || !currentSession.permissions.isSupervisor) {
-      return sendJSON(res, 403, { error: 'Access Denied: Supervisor or Command rank required.' });
-    }
-    const db = getBotDb();
-    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
-
-    const q = String(parsedUrl.query.q || '').trim().toLowerCase();
-    const tag = String(parsedUrl.query.tag || '').trim().toLowerCase();
-    const officer = String(parsedUrl.query.officer || '').trim().toLowerCase();
-    const week = String(parsedUrl.query.week || '').trim();
-
-    let sql = `
-      SELECT sh.id, sh.user_id, sh.roblox_username, sh.start_time, sh.end_time,
-             sh.duration_seconds, sh.week_key, sh.bodycam_id,
-             bs.tags, bs.review_status, bs.review_notes
-      FROM shift_history sh
-      LEFT JOIN bodycam_sessions bs ON bs.id = sh.bodycam_id
-      WHERE 1=1
-    `;
-    const params = [];
-
-    if (week) {
-      sql += ' AND sh.week_key = ?';
-      params.push(week);
-    }
-    if (officer) {
-      sql += ' AND (LOWER(sh.roblox_username) LIKE ? OR sh.user_id = ?)';
-      params.push(`%${officer}%`, officer);
-    }
-    if (tag) {
-      sql += ' AND LOWER(bs.tags) LIKE ?';
-      params.push(`%${tag}%`);
-    }
-    if (q) {
-      sql += ' AND (LOWER(sh.roblox_username) LIKE ? OR LOWER(bs.tags) LIKE ? OR LOWER(bs.review_notes) LIKE ?)';
-      params.push(`%${q}%`, `%${q}%`, `%${q}%`);
-    }
-
-    sql += ' ORDER BY sh.start_time DESC LIMIT 50';
-    const rows = db.prepare(sql).all(...params);
-
-    const results = rows.map(r => {
-      let tags = [];
-      try { tags = JSON.parse(r.tags || '[]'); } catch (e) {}
-      return {
-        id: r.id,
-        userId: r.user_id,
-        robloxUsername: r.roblox_username || 'Officer',
-        startTime: r.start_time,
-        endTime: r.end_time,
-        durationSeconds: r.duration_seconds,
-        durationFormatted: formatDuration(r.duration_seconds),
-        weekKey: r.week_key,
-        bodycamId: r.bodycam_id,
-        tags,
-        reviewStatus: r.review_status || 'unreviewed'
-      };
-    });
-
-    return sendJSON(res, 200, { results });
-  }
-
 
   // 5. API: GET /api/duty-roster (Real-time in-game autolog sessions & weekly stats from bot.db)
   if (pathname === '/api/duty-roster') {
@@ -1712,327 +1350,6 @@ const server = http.createServer(async (req, res) => {
         action: inc.action || 'Standard Patrol Action'
       }));
     return sendJSON(res, 200, { blotter: redacted });
-  }
-
-  // API: GET /api/public/transparency (Public - monthly totals and action breakdowns)
-  // Strictly aggregate counts only - completely devoid of officer names, suspect IDs, or narratives.
-  if (pathname === '/api/public/transparency' && req.method === 'GET') {
-    const allIncidents = readJSONFile('incidents.json', []);
-    const monthCounts = {};
-    const actionCounts = {};
-
-    allIncidents.forEach(inc => {
-      const dateStr = inc.timestamp ? String(inc.timestamp).split('T')[0] : '';
-      const monthKey = dateStr.slice(0, 7) || '2026-09';
-      monthCounts[monthKey] = (monthCounts[monthKey] || 0) + 1;
-
-      const act = String(inc.action || 'Standard Patrol Action').trim();
-      actionCounts[act] = (actionCounts[act] || 0) + 1;
-    });
-
-    const byMonth = Object.keys(monthCounts).sort().map(m => ({ month: m, count: monthCounts[m] }));
-    const byAction = Object.keys(actionCounts).map(a => ({ action: a, count: actionCounts[a] })).sort((a, b) => b.count - a.count);
-
-    return sendJSON(res, 200, { byMonth, byAction, totalIncidents: allIncidents.length });
-  }
-
-
-  // API: GET /api/officer/stats (Authenticated Officer - Personal Career Stats)
-  if (pathname === '/api/officer/stats' && req.method === 'GET') {
-    if (!currentSession || !currentSession.permissions.isOfficer) {
-      return sendJSON(res, 401, { error: 'Unauthorized: Officer session required' });
-    }
-    const db = getBotDb();
-    let allTimeShifts = 0;
-    let allTimeSeconds = 0;
-    let longestShiftSeconds = 0;
-    let currentWeekSeconds = 0;
-    const weekKey = getWeekKey();
-
-    if (db) {
-      try {
-        const stats = db.prepare('SELECT COUNT(*) as count, COALESCE(SUM(duration_seconds), 0) as total, COALESCE(MAX(duration_seconds), 0) as longest FROM shift_history WHERE user_id = ?').get(currentSession.id);
-        if (stats) {
-          allTimeShifts = stats.count || 0;
-          allTimeSeconds = stats.total || 0;
-          longestShiftSeconds = stats.longest || 0;
-        }
-        const weekly = db.prepare('SELECT total_seconds FROM weekly_totals WHERE user_id = ? AND week_key = ?').get(currentSession.id, weekKey);
-        if (weekly) {
-          currentWeekSeconds = weekly.total_seconds || 0;
-        }
-      } catch (e) {
-        console.error('[OFFICER STATS DB ERROR]', e.message);
-      }
-    }
-
-    const incidents = readJSONFile('incidents.json', []);
-    const incidentsFiled = incidents.filter(i => i.officerId === currentSession.id).length;
-
-    const quotaTargetSeconds = currentSession.quotaTargetSeconds || 900;
-    const quotaMet = currentWeekSeconds >= quotaTargetSeconds;
-    const quotaPercent = quotaTargetSeconds > 0 ? Math.min(999, Math.round((currentWeekSeconds / quotaTargetSeconds) * 100)) : 100;
-
-    return sendJSON(res, 200, {
-      allTimeShifts,
-      allTimeSeconds,
-      allTimeFormatted: formatDuration(allTimeSeconds),
-      longestShiftSeconds,
-      longestShiftFormatted: formatDuration(longestShiftSeconds),
-      currentWeekSeconds,
-      currentWeekFormatted: formatDuration(currentWeekSeconds),
-      quotaTargetSeconds,
-      quotaTargetFormatted: formatDuration(quotaTargetSeconds),
-      quotaMet,
-      quotaPercent,
-      incidentsFiled
-    });
-  }
-
-  // API: GET /api/fto/progress (Authenticated Officer - Checklist progress)
-  if (pathname === '/api/fto/progress' && req.method === 'GET') {
-    if (!currentSession || !currentSession.permissions.isOfficer) {
-      return sendJSON(res, 401, { error: 'Unauthorized' });
-    }
-    const db = getBotDb();
-    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
-
-    const queryTraineeId = parsedUrl.query.traineeId ? String(parsedUrl.query.traineeId).trim() : null;
-    let targetTrainee = currentSession.id;
-    if (queryTraineeId && queryTraineeId !== currentSession.id) {
-      if (!currentSession.permissions.isSupervisor) {
-        // Check if current session is assigned trainer
-        const assign = db.prepare('SELECT id FROM fto_assignments WHERE trainee_id = ? AND trainer_id = ? AND status = "active"').get(queryTraineeId, currentSession.id);
-        if (!assign) {
-          return sendJSON(res, 403, { error: 'Access Denied: Supervisor or assigned trainer permissions required.' });
-        }
-      }
-      targetTrainee = queryTraineeId;
-    }
-
-    const assignment = db.prepare('SELECT * FROM fto_assignments WHERE trainee_id = ? AND status = "active" ORDER BY assigned_at DESC LIMIT 1').get(targetTrainee) || null;
-    const signoffs = db.prepare('SELECT * FROM fto_signoffs WHERE trainee_id = ?').all(targetTrainee);
-    const signoffMap = {};
-    signoffs.forEach(s => { signoffMap[s.stage] = s; });
-
-    const stages = FTO_STAGES.map(stage => {
-      const match = signoffMap[stage];
-      return {
-        stage,
-        completed: !!match,
-        signedOffBy: match ? match.signed_off_by : null,
-        signedOffAt: match ? match.signed_off_at : null,
-        notes: match ? match.notes : ''
-      };
-    });
-
-    const completedCount = stages.filter(s => s.completed).length;
-    return sendJSON(res, 200, {
-      traineeId: targetTrainee,
-      assignment,
-      stages,
-      completedCount,
-      totalStages: FTO_STAGES.length,
-      isCertified: completedCount === FTO_STAGES.length
-    });
-  }
-
-  // API: POST /api/fto/signoff (Supervisor or Assigned Trainer)
-  if (pathname === '/api/fto/signoff' && req.method === 'POST') {
-    if (!currentSession || !currentSession.permissions.isOfficer) {
-      return sendJSON(res, 401, { error: 'Unauthorized' });
-    }
-    const db = getBotDb();
-    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
-
-    const body = await parseBody(req);
-    const traineeId = String(body.traineeId || '').trim();
-    const stage = String(body.stage || '').trim();
-    const notes = String(body.notes || '').trim().slice(0, 1000);
-
-    if (!traineeId || !stage) {
-      return sendJSON(res, 400, { error: 'Missing trainee ID or stage' });
-    }
-    if (!FTO_STAGES.includes(stage)) {
-      return sendJSON(res, 400, { error: 'Invalid FTO training stage' });
-    }
-
-    // Permission check
-    let authorized = currentSession.permissions.isSupervisor;
-    if (!authorized) {
-      const assign = db.prepare('SELECT id FROM fto_assignments WHERE trainee_id = ? AND trainer_id = ? AND status = "active"').get(traineeId, currentSession.id);
-      if (assign) authorized = true;
-    }
-    if (!authorized) {
-      return sendJSON(res, 403, { error: 'Access Denied: You must be a Supervisor or the assigned Trainer to sign off stages.' });
-    }
-
-    const signoffId = 'FTO-' + crypto.randomBytes(8).toString('hex');
-    db.prepare(`
-      INSERT INTO fto_signoffs (id, trainee_id, stage, signed_off_by, signed_off_by_id, signed_off_at, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(signoffId, traineeId, stage, currentSession.displayName, currentSession.id, Date.now(), notes);
-
-    // Discord notification
-    if (DISCORD_BOT_TOKEN) {
-      const embed = {
-        title: 'FTO Stage Sign-off Completed',
-        color: 0x3498DB,
-        description: `**Trainee:** <@${traineeId}>
-**Trainer:** ${currentSession.displayName} (<@${currentSession.id}>)
-**Stage:** ${stage}
-**Notes:** ${notes || 'Demonstrated proficiency.'}`,
-        footer: { text: 'Westpoint Field Training Program' },
-        timestamp: new Date().toISOString()
-      };
-      postDiscordMessage(AUDIT_LOGS_CHANNEL_ID, embed).catch(() => {});
-    }
-
-    return sendJSON(res, 200, { success: true, stage, traineeId });
-  }
-
-  // API: POST /api/admin/fto/assign (Supervisor / Command)
-  if (pathname === '/api/admin/fto/assign' && req.method === 'POST') {
-    if (!currentSession || !currentSession.permissions.isSupervisor) {
-      return sendJSON(res, 403, { error: 'Access Denied: Supervisor or Command rank required.' });
-    }
-    const db = getBotDb();
-    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
-
-    const body = await parseBody(req);
-    const traineeId = String(body.traineeId || '').trim();
-    const traineeUsername = String(body.traineeUsername || 'Trainee').trim();
-    const trainerId = String(body.trainerId || '').trim();
-    const trainerUsername = String(body.trainerUsername || 'Trainer').trim();
-
-    if (!traineeId || !trainerId) {
-      return sendJSON(res, 400, { error: 'Missing trainee ID or trainer ID' });
-    }
-
-    // Mark previous assignments inactive
-    db.prepare('UPDATE fto_assignments SET status = "reassigned" WHERE trainee_id = ? AND status = "active"').run(traineeId);
-
-    const assignId = 'FTOA-' + crypto.randomBytes(8).toString('hex');
-    db.prepare(`
-      INSERT INTO fto_assignments (id, trainee_id, trainee_username, trainer_id, trainer_username, assigned_at, status, assigned_by)
-      VALUES (?, ?, ?, ?, ?, ?, 'active', ?)
-    `).run(assignId, traineeId, traineeUsername, trainerId, trainerUsername, Date.now(), currentSession.displayName);
-
-    return sendJSON(res, 200, { success: true, assignId });
-  }
-
-  // API: GET /api/admin/fto/trainees (Supervisor / Command)
-  if (pathname === '/api/admin/fto/trainees' && req.method === 'GET') {
-    if (!currentSession || !currentSession.permissions.isSupervisor) {
-      return sendJSON(res, 403, { error: 'Access Denied: Supervisor rank required.' });
-    }
-    const db = getBotDb();
-    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
-
-    const trainees = [];
-    try {
-      const assignments = db.prepare('SELECT * FROM fto_assignments WHERE status = "active"').all();
-      for (const a of assignments) {
-        const signoffs = db.prepare('SELECT COUNT(*) as count FROM fto_signoffs WHERE trainee_id = ?').get(a.trainee_id);
-        const count = signoffs ? signoffs.count : 0;
-        trainees.push({
-          traineeId: a.trainee_id,
-          traineeUsername: a.trainee_username,
-          trainerId: a.trainer_id,
-          trainerUsername: a.trainer_username,
-          assignedAt: a.assigned_at,
-          completedStages: count,
-          totalStages: FTO_STAGES.length,
-          isCertified: count >= FTO_STAGES.length
-        });
-      }
-    } catch (e) {
-      console.error('[FTO TRAINEES DB ERROR]', e.message);
-    }
-    return sendJSON(res, 200, { trainees });
-  }
-
-  // API: POST /api/admin/staff-flags (Command / IA Only)
-  if (pathname === '/api/admin/staff-flags' && req.method === 'POST') {
-    if (!currentSession || (!currentSession.permissions.isCommand && !currentSession.permissions.isInternalAffairs)) {
-      return sendJSON(res, 403, { error: 'Access Denied: Command or Internal Affairs rank required.' });
-    }
-    const db = getBotDb();
-    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
-
-    const body = await parseBody(req);
-    const action = body.action || 'add';
-
-    if (action === 'remove') {
-      const flagId = String(body.flagId || '').trim();
-      if (!flagId) return sendJSON(res, 400, { error: 'Missing flag ID' });
-      db.prepare('DELETE FROM staff_flags WHERE id = ?').run(flagId);
-      return sendJSON(res, 200, { success: true });
-    }
-
-    const userId = String(body.userId || '').trim();
-    const flagType = String(body.flagType || 'custom').toLowerCase();
-    const label = String(body.label || 'Staff Note').trim().slice(0, 100);
-    const reason = String(body.reason || '').trim().slice(0, 1000);
-
-    if (!userId || !label) {
-      return sendJSON(res, 400, { error: 'Missing user ID or flag label' });
-    }
-    if (!['commendation', 'watch', 'restriction', 'custom'].includes(flagType)) {
-      return sendJSON(res, 400, { error: 'Invalid flag type' });
-    }
-
-    const flagId = 'FLG-' + crypto.randomBytes(8).toString('hex');
-    db.prepare(`
-      INSERT INTO staff_flags (id, user_id, flag_type, label, reason, created_by, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(flagId, userId, flagType, label, reason, currentSession.displayName, Date.now());
-
-    return sendJSON(res, 200, { success: true, flagId });
-  }
-
-  // API: GET /api/push/vapid-public-key (Public/Officer)
-  if (pathname === '/api/push/vapid-public-key' && req.method === 'GET') {
-    const keys = getVapidKeys();
-    return sendJSON(res, 200, { publicKey: keys.publicKey });
-  }
-
-  // API: POST /api/push/subscribe (Officer Push Subscription)
-  if (pathname === '/api/push/subscribe' && req.method === 'POST') {
-    if (!currentSession || !currentSession.permissions.isOfficer) {
-      return sendJSON(res, 401, { error: 'Unauthorized: Officer login required' });
-    }
-    const db = getBotDb();
-    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
-
-    const body = await parseBody(req);
-    const sub = body.subscription;
-    if (!sub || !sub.endpoint || !sub.keys || !sub.keys.p256dh || !sub.keys.auth) {
-      return sendJSON(res, 400, { error: 'Invalid push subscription payload' });
-    }
-
-    db.prepare(`
-      INSERT OR REPLACE INTO push_subscriptions (endpoint, user_id, keys_p256dh, keys_auth, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(sub.endpoint, currentSession.id, sub.keys.p256dh, sub.keys.auth, Date.now());
-
-    return sendJSON(res, 200, { success: true });
-  }
-
-  // API: POST /api/push/unsubscribe
-  if (pathname === '/api/push/unsubscribe' && req.method === 'POST') {
-    if (!currentSession || !currentSession.permissions.isOfficer) {
-      return sendJSON(res, 401, { error: 'Unauthorized: Officer login required' });
-    }
-    const db = getBotDb();
-    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
-
-    const body = await parseBody(req);
-    const endpoint = String(body.endpoint || '').trim();
-    if (endpoint) {
-      db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').run(endpoint);
-    }
-    return sendJSON(res, 200, { success: true });
   }
 
   // 6. API: GET /api/officer/incidents
@@ -2139,28 +1456,6 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
-  // API: GET /api/my-reports (Authenticated Citizen - My Filed Reports)
-  if (pathname === '/api/my-reports' && req.method === 'GET') {
-    if (!currentSession) {
-      return sendJSON(res, 401, { error: 'Unauthorized: Discord login required' });
-    }
-    const allReports = readJSONFile('reports.json', []);
-    // Match by citizen Discord user ID
-    const myReports = allReports
-      .filter(r => r.reporterId === currentSession.id)
-      .map(r => ({
-        id: r.id,
-        type: r.type,
-        officer: r.officer,
-        location: r.location,
-        report: r.report,
-        status: r.status,
-        timestamp: r.timestamp
-      }));
-    return sendJSON(res, 200, { reports: myReports });
-  }
-
-
   // 8B. API: POST /api/contact/staff (Reach Out to Staff Form)
   if (pathname === '/api/contact/staff' && req.method === 'POST') {
     if (!currentSession) {
@@ -2212,172 +1507,6 @@ const server = http.createServer(async (req, res) => {
 
     return sendJSON(res, 200, { success: true, id: contactEntry.id });
   }
-
-  const DEFAULT_POSITIONS_SEED = [
-    {
-      id: "POS-1001",
-      title: "Security Officer (Field Patrol)",
-      department: "Patrol Operations",
-      status: "closed",
-      description: "Primary uniformed security officer role responsible for high-visibility physical security, access control, and incident reporting across Harrison County contracted properties.",
-      createdAt: "2026-09-01T00:00:00.000Z"
-    },
-    {
-      id: "POS-1002",
-      title: "Communications Dispatcher",
-      department: "Dispatch & Communications",
-      status: "closed",
-      description: "Responsible for triaging calls for service, monitoring officer radio traffic, dispatching active patrol units, and logging incident records in the central dispatch system.",
-      createdAt: "2026-09-01T00:00:00.000Z"
-    },
-    {
-      id: "POS-1003",
-      title: "Field Supervisor (Corporal / Sergeant)",
-      department: "Field Supervision",
-      status: "closed",
-      description: "Oversees patrol personnel on active shifts, conducts spot checks on uniform compliance and report quality, and handles elevated field incidents.",
-      createdAt: "2026-09-01T00:00:00.000Z"
-    }
-  ];
-
-  function getPositions() {
-    const existing = readJSONFile('positions.json', null);
-    if (existing && Array.isArray(existing)) return existing;
-    writeJSONFile('positions.json', DEFAULT_POSITIONS_SEED);
-    return DEFAULT_POSITIONS_SEED;
-  }
-
-  // API: GET /api/careers/positions (Public - all positions)
-  if (pathname === '/api/careers/positions' && req.method === 'GET') {
-    const positions = getPositions();
-    return sendJSON(res, 200, positions);
-  }
-
-  // API: POST /api/careers/apply (Authenticated Citizen - apply for open position)
-  if (pathname === '/api/careers/apply' && req.method === 'POST') {
-    if (!currentSession) {
-      return sendJSON(res, 401, { error: 'Authentication Required: Please sign in with Discord.' });
-    }
-    const body = await parseBody(req);
-    const positionId = String(body.positionId || '').trim();
-    const coverLetter = String(body.coverLetter || '').trim().slice(0, 4000);
-
-    if (!positionId) return sendJSON(res, 400, { error: 'Missing position ID' });
-    if (!coverLetter) return sendJSON(res, 400, { error: 'Please provide a cover letter or experience statement.' });
-
-    const positions = getPositions();
-    const targetPos = positions.find(p => p.id === positionId);
-    if (!targetPos || targetPos.status !== 'open') {
-      return sendJSON(res, 400, { error: 'This position is currently closed for applications.' });
-    }
-
-    const appEntry = {
-      id: 'APP-' + Math.floor(100000 + Math.random() * 900000),
-      applicantId: currentSession.id,
-      applicantName: currentSession.displayName || currentSession.username,
-      applicantDiscordUsername: currentSession.username,
-      applicantRobloxUsername: currentSession.robloxUsername || null,
-      positionId: targetPos.id,
-      positionTitle: targetPos.title,
-      coverLetter,
-      status: 'New',
-      timestamp: new Date().toISOString()
-    };
-
-    const applications = readJSONFile('applications.json', []);
-    applications.unshift(appEntry);
-    if (applications.length > 500) applications.length = 500;
-    writeJSONFile('applications.json', applications);
-
-    // Discord Alert
-    if (DISCORD_BOT_TOKEN) {
-      const robloxInfo = currentSession.robloxUsername ? '`' + currentSession.robloxUsername + '`' : 'Unlinked / N/A';
-      const embed = {
-        title: `New Employment Application: ${targetPos.title}`,
-        color: 0x2ECC71,
-        description: `**Applicant:** <@${currentSession.id}> (\`${currentSession.username}\`)\n**Roblox:** ${robloxInfo}\n**Position:** ${targetPos.title} (\`${targetPos.department}\`)\n\n**Statement:**\n> ${coverLetter.slice(0, 1000).replace(/>/g, '\\>')}`,
-        footer: { text: `App ID: ${appEntry.id} · Westpoint Careers` },
-        timestamp: appEntry.timestamp
-      };
-      postDiscordMessage(AUDIT_LOGS_CHANNEL_ID, embed).catch(() => {});
-    }
-
-    return sendJSON(res, 200, { success: true, id: appEntry.id });
-  }
-
-  // API: GET /api/admin/careers/positions (Command Only)
-  if (pathname === '/api/admin/careers/positions' && req.method === 'GET') {
-    if (!currentSession || !currentSession.permissions.isCommand) {
-      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
-    }
-    const positions = getPositions();
-    return sendJSON(res, 200, { positions });
-  }
-
-  // API: POST /api/admin/careers/positions (Command Only - create/update position)
-  if (pathname === '/api/admin/careers/positions' && req.method === 'POST') {
-    if (!currentSession || !currentSession.permissions.isCommand) {
-      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
-    }
-    const body = await parseBody(req);
-    const title = String(body.title || 'Security Role').trim().slice(0, 100);
-    const department = String(body.department || 'Operations').trim().slice(0, 100);
-    const status = body.status === 'open' ? 'open' : 'closed';
-    const description = String(body.description || '').trim().slice(0, 2000);
-
-    const positions = getPositions();
-    if (body.id) {
-      const idx = positions.findIndex(p => p.id === body.id);
-      if (idx !== -1) {
-        positions[idx] = { ...positions[idx], title, department, status, description, updatedAt: new Date().toISOString() };
-      } else {
-        positions.push({ id: body.id, title, department, status, description, createdAt: new Date().toISOString() });
-      }
-    } else {
-      const newPos = {
-        id: 'POS-' + Math.floor(1000 + Math.random() * 9000),
-        title,
-        department,
-        status,
-        description,
-        createdAt: new Date().toISOString()
-      };
-      positions.push(newPos);
-    }
-    writeJSONFile('positions.json', positions);
-    return sendJSON(res, 200, { success: true, positions });
-  }
-
-  // API: GET /api/admin/careers/applications (Command Only)
-  if (pathname === '/api/admin/careers/applications' && req.method === 'GET') {
-    if (!currentSession || !currentSession.permissions.isCommand) {
-      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
-    }
-    const applications = readJSONFile('applications.json', []);
-    return sendJSON(res, 200, { applications });
-  }
-
-  // API: POST /api/admin/careers/applications/update (Command Only - review status)
-  if (pathname === '/api/admin/careers/applications/update' && req.method === 'POST') {
-    if (!currentSession || !currentSession.permissions.isCommand) {
-      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
-    }
-    const body = await parseBody(req);
-    const applicationId = String(body.applicationId || '').trim();
-    const status = ['New', 'Reviewing', 'Accepted', 'Rejected'].includes(body.status) ? body.status : 'Reviewing';
-
-    const applications = readJSONFile('applications.json', []);
-    const target = applications.find(a => a.id === applicationId);
-    if (!target) return sendJSON(res, 404, { error: 'Application not found' });
-
-    target.status = status;
-    target.reviewedBy = currentSession.displayName;
-    target.reviewedAt = new Date().toISOString();
-    writeJSONFile('applications.json', applications);
-
-    return sendJSON(res, 200, { success: true, record: target });
-  }
-
 
   // 9. API: GET /api/ia/reports (Internal Affairs & Command Only)
   if (pathname === '/api/ia/reports' && req.method === 'GET') {
@@ -2431,188 +1560,6 @@ const server = http.createServer(async (req, res) => {
     }
 
     return sendJSON(res, 200, { success: true, record: target });
-  }
-
-
-  // API: GET /api/admin/analytics (Command Only - 8-week rollups & hourly distribution)
-  if (pathname === '/api/admin/analytics' && req.method === 'GET') {
-    if (!currentSession || !currentSession.permissions.isCommand) {
-      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
-    }
-    const db = getBotDb();
-    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
-
-    // Generate the last 8 calendar weeks in chronological order
-    const weeksList = [];
-    const now = new Date();
-    for (let i = 7; i >= 0; i--) {
-      const d = new Date(now.getTime() - (i * 7 * 24 * 60 * 60 * 1000));
-      const wk = getWeekKey(d);
-      if (!weeksList.includes(wk)) weeksList.push(wk);
-    }
-
-    const weeklyStats = [];
-    const incidents = readJSONFile('incidents.json', []);
-
-    const incidentsByWeek = {};
-    incidents.forEach(inc => {
-      if (inc.timestamp) {
-        const wk = getWeekKey(new Date(inc.timestamp));
-        incidentsByWeek[wk] = (incidentsByWeek[wk] || 0) + 1;
-      }
-    });
-
-    let totalPatrolSecondsAll = 0;
-    let totalShiftsAll = 0;
-
-    try {
-      const allShifts = db.prepare('SELECT COUNT(*) as count, COALESCE(SUM(duration_seconds), 0) as total FROM shift_history').get();
-      if (allShifts) {
-        totalShiftsAll = allShifts.count;
-        totalPatrolSecondsAll = allShifts.total;
-      }
-    } catch (e) {}
-
-    for (const wk of weeksList) {
-      let totalSeconds = 0;
-      let shiftCount = 0;
-      let activeOfficers = 0;
-      try {
-        const shRow = db.prepare(`
-          SELECT COALESCE(SUM(duration_seconds), 0) as total_seconds,
-                 COUNT(*) as shift_count,
-                 COUNT(DISTINCT user_id) as active_officers
-          FROM shift_history
-          WHERE week_key = ?
-        `).get(wk);
-        if (shRow) {
-          totalSeconds = shRow.total_seconds;
-          shiftCount = shRow.shift_count;
-          activeOfficers = shRow.active_officers;
-        }
-      } catch (e) {}
-
-      weeklyStats.push({
-        weekKey: wk,
-        totalSeconds,
-        totalHours: Math.round((totalSeconds / 3600) * 10) / 10,
-        shiftCount,
-        activeOfficers,
-        incidentCount: incidentsByWeek[wk] || 0
-      });
-    }
-
-    const hourlyDistribution = new Array(24).fill(0);
-    try {
-      const shifts = db.prepare('SELECT start_time FROM shift_history').all();
-      shifts.forEach(s => {
-        if (s.start_time) {
-          const hour = new Date(s.start_time).getHours();
-          if (hour >= 0 && hour < 24) {
-            hourlyDistribution[hour]++;
-          }
-        }
-      });
-    } catch (e) {}
-
-    return sendJSON(res, 200, {
-      weeks: weeklyStats,
-      hourlyDistribution,
-      totalShiftsAllTime: totalShiftsAll,
-      totalPatrolHoursAllTime: Math.round((totalPatrolSecondsAll / 3600) * 10) / 10
-    });
-  }
-
-  // API: GET /api/admin/flags/quota-risk (Supervisor & Command)
-  if (pathname === '/api/admin/flags/quota-risk' && req.method === 'GET') {
-    if (!currentSession || (!currentSession.permissions.isCommand && !currentSession.permissions.isSupervisor)) {
-      return sendJSON(res, 403, { error: 'Access Denied: Supervisor or Command rank required.' });
-    }
-    const db = getBotDb();
-    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
-
-    const weekKey = getWeekKey();
-    const flaggedOfficers = [];
-
-    try {
-      const staffRows = db.prepare('SELECT user_id, roblox_username, last_known_rank, quota_target_seconds FROM staff_members').all();
-      const currentTotals = db.prepare('SELECT user_id, total_seconds FROM weekly_totals WHERE week_key = ?').all(weekKey);
-      const totalMap = {};
-      currentTotals.forEach(t => { totalMap[t.user_id] = t.total_seconds || 0; });
-
-      const dayOfWeek = new Date().getDay();
-      const isLateInWeek = dayOfWeek === 0 || dayOfWeek >= 4;
-
-      staffRows.forEach(s => {
-        const target = Number(s.quota_target_seconds) || 900;
-        const currentSec = totalMap[s.user_id] || 0;
-        const pct = target > 0 ? Math.round((currentSec / target) * 100) : 100;
-
-        if (currentSec < target) {
-          let risk = null;
-          if (currentSec === 0 && isLateInWeek) {
-            risk = 'high';
-          } else if (pct < 50 && isLateInWeek) {
-            risk = 'high';
-          } else if (pct < 75 && (dayOfWeek === 5 || dayOfWeek === 6 || dayOfWeek === 0)) {
-            risk = 'moderate';
-          }
-
-          if (risk) {
-            flaggedOfficers.push({
-              userId: s.user_id,
-              robloxUsername: s.roblox_username || 'Unknown',
-              rank: s.last_known_rank || 'Security Officer',
-              currentSeconds: currentSec,
-              currentFormatted: formatDuration(currentSec),
-              quotaTargetSeconds: target,
-              quotaTargetFormatted: formatDuration(target),
-              percent: pct,
-              riskLevel: risk
-            });
-          }
-        }
-      });
-    } catch (e) {
-      console.error('[QUOTA RISK DB ERROR]', e.message);
-    }
-
-    flaggedOfficers.sort((a, b) => a.percent - b.percent);
-    return sendJSON(res, 200, { flaggedOfficers, weekKey });
-  }
-
-  // API: GET /api/admin/flags/stale-ia (Command & Internal Affairs)
-  if (pathname === '/api/admin/flags/stale-ia' && req.method === 'GET') {
-    if (!currentSession || (!currentSession.permissions.isCommand && !currentSession.permissions.isInternalAffairs)) {
-      return sendJSON(res, 403, { error: 'Access Denied: Internal Affairs or Command rank required.' });
-    }
-    const reports = readJSONFile('reports.json', []);
-    const now = Date.now();
-    const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
-
-    const staleReports = [];
-    reports.forEach(r => {
-      const isUnresolved = ['New', 'Under Review'].includes(r.status);
-      if (isUnresolved && r.timestamp) {
-        const submittedTime = new Date(r.timestamp).getTime();
-        const diffMs = now - submittedTime;
-        if (diffMs > FIVE_DAYS_MS) {
-          staleReports.push({
-            id: r.id,
-            type: r.type,
-            officer: r.officer,
-            location: r.location,
-            status: r.status,
-            submittedDaysAgo: Math.floor(diffMs / (24 * 60 * 60 * 1000)),
-            timestamp: r.timestamp,
-            assignedIA: r.assignedIA || 'Unassigned'
-          });
-        }
-      }
-    });
-
-    staleReports.sort((a, b) => b.submittedDaysAgo - a.submittedDaysAgo);
-    return sendJSON(res, 200, { staleReports });
   }
 
   // 11. API: POST /api/command/action (High Command Only - Issues Staff Action & Sends Discord Embed)
@@ -2848,51 +1795,6 @@ const server = http.createServer(async (req, res) => {
     return sendJSON(res, 200, { success: true });
   }
 
-
-  // API: POST /api/admin/action-code/request (Command Only - Two-Factor Confirmation Code)
-  if (pathname === '/api/admin/action-code/request' && req.method === 'POST') {
-    if (!currentSession || !currentSession.permissions.isCommand) {
-      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
-    }
-    const body = await parseBody(req);
-    const action = String(body.action || 'destructive-action').trim();
-    const code = 'WP-' + crypto.randomInt(100000, 999999);
-    const expiresAt = Date.now() + 5 * 60 * 1000;
-
-    ACTION_CONFIRMATION_CODES.set(currentSession.id, { code, action, expiresAt });
-
-    if (DISCORD_BOT_TOKEN) {
-      const embed = {
-        title: 'Action Confirmation Code Required',
-        color: 0xE67E22,
-        description: `**Command Officer:** ${currentSession.displayName} (<@${currentSession.id}>)\n**Requested Action:** \`${action}\`\n\n**Confirmation Code:**\n# \`${code}\`\n\n*Valid for 5 minutes. Enter this code on the portal to confirm.*\n`,
-        footer: { text: 'Westpoint Security 2FA Verification' },
-        timestamp: new Date().toISOString()
-      };
-      postDiscordMessage(AUDIT_LOGS_CHANNEL_ID, embed).catch(() => {});
-    }
-
-    return sendJSON(res, 200, {
-      success: true,
-      message: 'Confirmation code dispatched to administrative channel.',
-      expiresAt,
-      testCode: (!DISCORD_BOT_TOKEN || process.env.NODE_ENV === 'test') ? code : undefined
-    });
-  }
-
-  // API: POST /api/admin/backup-now (Command Only - Trigger immediate DB backup)
-  if (pathname === '/api/admin/backup-now' && req.method === 'POST') {
-    if (!currentSession || !currentSession.permissions.isCommand) {
-      return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
-    }
-    try {
-      const result = await backupDatabaseToR2();
-      return sendJSON(res, 200, result);
-    } catch (err) {
-      return sendJSON(res, 500, { error: 'Backup failed: ' + err.message });
-    }
-  }
-
   // API: POST /api/admin/reset-quota-logs (Command Only - wipe weekly quota
   // totals and shift history for a clean slate. Does not touch active
   // sessions, the staff roster, or bodycam video logs on Discord - those
@@ -2901,29 +1803,18 @@ const server = http.createServer(async (req, res) => {
     if (!currentSession || !currentSession.permissions.isCommand) {
       return sendJSON(res, 403, { error: 'Access Denied: High Command rank required.' });
     }
-    const body = await parseBody(req);
-    const confirmationCode = String(body.confirmationCode || '').trim();
-    const activeCode = ACTION_CONFIRMATION_CODES.get(currentSession.id);
-    if (!activeCode || activeCode.action !== 'reset-quota-logs' || activeCode.expiresAt < Date.now() || activeCode.code !== confirmationCode) {
-      return sendJSON(res, 400, {
-        error: 'Confirmation code required: Request a verification code first and provide it in confirmationCode.'
-      });
-    }
-    ACTION_CONFIRMATION_CODES.delete(currentSession.id);
-
     const db = getBotDb();
     if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
     try {
       const totals = db.prepare('DELETE FROM weekly_totals').run();
       const shifts = db.prepare('DELETE FROM shift_history').run();
-      logger.warn('Weekly quota logs and shift history reset by Command', { by: currentSession.displayName });
       return sendJSON(res, 200, {
         success: true,
         weeklyTotalsDeleted: totals.changes,
         shiftHistoryDeleted: shifts.changes
       });
     } catch (e) {
-      logger.error('Quota reset failed', {}, e);
+      console.error('[QUOTA RESET ERROR]', e.message);
       return sendJSON(res, 500, { error: 'Failed to reset quota logs' });
     }
   }
@@ -3442,15 +2333,7 @@ const server = http.createServer(async (req, res) => {
         durationSeconds: s.duration_seconds,
         durationFormatted: formatDuration(s.duration_seconds),
         weekKey: s.week_key,
-        bodycam: s.bodycam_id ? {
-          id: s.bodycam_id,
-          status: bodycamMap[s.bodycam_id]?.status || 'expired',
-          tags: (() => {
-            try { return JSON.parse(bodycamMap[s.bodycam_id]?.tags || '[]'); } catch(e) { return []; }
-          })(),
-          reviewStatus: bodycamMap[s.bodycam_id]?.review_status || 'unreviewed',
-          reviewNotes: bodycamMap[s.bodycam_id]?.review_notes || ''
-        } : null
+        bodycam: s.bodycam_id ? { id: s.bodycam_id, status: bodycamMap[s.bodycam_id]?.status || 'expired' } : null
       }))
     });
   }
