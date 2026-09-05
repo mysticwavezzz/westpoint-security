@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Site Map | Westpoint Security</title>
+  <title id="pageTitle">News | Westpoint Security</title>
   <link rel="icon" href="/assets/favicon.png" />
   <link rel="stylesheet" href="/css/style.css" />
 </head>
@@ -46,53 +46,31 @@
       <a href="/services">SERVICES</a>
       <a href="/service-area">SERVICE AREA</a>
       <a href="/careers">CAREERS</a>
-      <a href="/newsroom">NEWSROOM</a>
+      <a href="/newsroom" class="is-active">NEWSROOM</a>
       <a href="/contact">CONTACT &amp; REPORTS</a>
       <a href="/employee">EMPLOYEE ACCESS</a>
     </nav>
 
     <main class="main-layout" id="main-content" tabindex="-1">
       <article class="main-content">
-        <h1>Site Map</h1>
-        <section class="content-box">
-          <h2>Navigation</h2>
-          <div class="content-box-body">
-            <ul style="padding-left: 20px; line-height: 1.8;">
-              <li><a href="/">HOME</a></li>
-              <li><a href="/about">ABOUT WESTPOINT</a></li>
-              <li><a href="/services">SERVICES</a>
-                <ul>
-                  <li><a href="/services#event">Event Security</a></li>
-                  <li><a href="/services#private">Private Security</a></li>
-                  <li><a href="/services#contracted">Contracted Security (Building)</a></li>
-                </ul>
-              </li>
-              <li><a href="/service-area">SERVICE AREA</a></li>
-              <li><a href="/careers">CAREERS</a></li>
-              <li><a href="/newsroom">NEWSROOM</a></li>
-              <li><a href="/blotter">PUBLIC INCIDENT BLOTTER</a></li>
-              <li><a href="/contact">CONTACT &amp; REPORTS</a></li>
-              <li><a href="/contact?mode=misconduct">REPORT MISCONDUCT (INTAKE)</a></li>
-              <li><a href="/terms">TERMS OF SERVICE</a></li>
-              <li><a href="/privacy">PRIVACY POLICY</a></li>
-              <li><a href="/employee">EMPLOYEE ACCESS</a></li>
-            </ul>
-          </div>
-        </section>
+        <p class="more-link"><a href="/newsroom">[ &larr; Back to Newsroom ]</a></p>
+        <div id="articleBody">
+          <h1>Loading&hellip;</h1>
+        </div>
       </article>
     </main>
     <footer class="site-footer">
       <nav aria-label="Footer navigation">
-        <a href="/">HOME</a> | 
-        <a href="/about">ABOUT WESTPOINT</a> | 
-        <a href="/services">SERVICES</a> | 
-        <a href="/service-area">SERVICE AREA</a> | 
-        <a href="/careers">CAREERS</a> | 
-        <a href="/newsroom">NEWSROOM</a> | 
-        <a href="/contact">CONTACT &amp; REPORTS</a> | 
-        <a href="/terms">TERMS OF SERVICE</a> | 
-        <a href="/privacy">PRIVACY POLICY</a> | 
-        <a href="/site-map">SITE MAP</a> | 
+        <a href="/">HOME</a> |
+        <a href="/about">ABOUT WESTPOINT</a> |
+        <a href="/services">SERVICES</a> |
+        <a href="/service-area">SERVICE AREA</a> |
+        <a href="/careers">CAREERS</a> |
+        <a href="/newsroom">NEWSROOM</a> |
+        <a href="/contact">CONTACT &amp; REPORTS</a> |
+        <a href="/terms">TERMS OF SERVICE</a> |
+        <a href="/privacy">PRIVACY POLICY</a> |
+        <a href="/site-map">SITE MAP</a> |
         <a href="/employee">EMPLOYEE ACCESS</a>
       </nav>
       <p>
@@ -106,5 +84,40 @@
       <p class="last-updated">Last Updated: September 4, 2026</p>
     </footer>
   </div>
+
+  <script>
+    function escapeHtml(str) {
+      return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    async function loadArticle() {
+      const id = decodeURIComponent(window.location.pathname.replace(/^\/news\//, ''));
+      const bodyEl = document.getElementById('articleBody');
+      try {
+        const res = await fetch(`/api/news/${encodeURIComponent(id)}`);
+        const data = await res.json();
+        if (!res.ok || !data.article) {
+          bodyEl.innerHTML = '<h1>Article Not Found</h1><p>This news article may have been removed.</p>';
+          return;
+        }
+        const a = data.article;
+        document.title = a.title + ' | Westpoint Security';
+        document.getElementById('pageTitle').innerText = a.title + ' | Westpoint Security';
+        const paragraphs = (a.content || a.summary || '')
+          .split(/\n{2,}/)
+          .map(p => `<p>${escapeHtml(p).replace(/\n/g, '<br />')}</p>`)
+          .join('');
+        bodyEl.innerHTML = `
+          <div class="news-meta">Westpoint Security · ${escapeHtml(a.category || 'Notice')} · ${escapeHtml(a.date || '')} · By ${escapeHtml(a.author || 'Staff')}</div>
+          <h1>${escapeHtml(a.title)}</h1>
+          ${paragraphs || `<p>${escapeHtml(a.summary || '')}</p>`}
+        `;
+      } catch (e) {
+        bodyEl.innerHTML = '<h1>Error</h1><p>Could not load this article right now.</p>';
+      }
+    }
+    loadArticle();
+  </script>
 </body>
+
 </html>

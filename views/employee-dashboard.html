@@ -464,8 +464,11 @@
                       </select>
                     </label>
                   </div>
-                  <label>Summary / Lead Copy:
-                    <textarea name="newsSummary" required placeholder="Write the bulletin copy for the public..."></textarea>
+                  <label>Summary / Lead Copy (shown in list previews):
+                    <textarea name="newsSummary" required placeholder="Write a short summary for the homepage/newsroom list..."></textarea>
+                  </label>
+                  <label>Full Article Body (shown on the article's own page - optional, falls back to the summary above):
+                    <textarea name="newsContent" placeholder="Write the full article text here if it's longer than the summary..." style="min-height: 120px;"></textarea>
                   </label>
                 </fieldset>
                 <div>
@@ -1581,7 +1584,8 @@
       const payload = {
         title: form.newsTitle.value,
         category: form.newsCategory.value,
-        summary: form.newsSummary.value
+        summary: form.newsSummary.value,
+        content: form.newsContent.value
       };
 
       try {

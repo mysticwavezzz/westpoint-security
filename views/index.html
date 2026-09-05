@@ -60,6 +60,13 @@
           </p>
         </section>
 
+        <section class="content-box" id="patrolCounterBox" style="display: none;">
+          <div class="content-box-body" style="display: flex; align-items: center; gap: 10px; padding: 10px 16px;">
+            <span style="width: 9px; height: 9px; border-radius: 50%; background: #2ECC71; display: inline-block; flex-shrink: 0;" aria-hidden="true"></span>
+            <span id="patrolCounterText" style="font-size: 12.5px; font-weight: bold;"></span>
+          </div>
+        </section>
+
         <div class="feature-grid">
           <section class="content-box">
             <h2>Event Security</h2>
@@ -108,6 +115,14 @@
           </div>
         </section>
 
+        <section class="content-box">
+          <h2>Public Incident Blotter</h2>
+          <div class="content-box-body">
+            <p>A public log of recent patrol activity in Harrison County - officer and citizen names withheld.</p>
+            <p class="more-link"><a href="/blotter">[ View Blotter ]</a></p>
+          </div>
+        </section>
+
         <div class="home-status-bar">
           <strong>WESTPOINT SECURITY</strong>
           <span>Harrison Branch</span>
@@ -151,7 +166,7 @@
             container.innerHTML = data.news.map(item => `
               <article>
                 <div class="news-meta">Westpoint Security · ${escapeHtml(item.category || 'Notice')} · ${escapeHtml(item.date || '')}</div>
-                <h3><a href="/newsroom">${escapeHtml(item.title)}</a></h3>
+                <h3><a href="/news/${encodeURIComponent(item.id)}">${escapeHtml(item.title)}</a></h3>
                 <p>${escapeHtml(item.summary)}</p>
               </article>
             `).join('');
@@ -163,6 +178,22 @@
       return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
     loadPortalNews();
+
+    async function loadPatrolCount() {
+      try {
+        const res = await fetch('/api/public/patrol-count');
+        const data = await res.json();
+        const box = document.getElementById('patrolCounterBox');
+        const text = document.getElementById('patrolCounterText');
+        const count = data.count || 0;
+        text.innerText = count === 1
+          ? '1 officer currently on patrol in Harrison County'
+          : `${count} officers currently on patrol in Harrison County`;
+        box.style.display = count > 0 ? 'block' : 'none';
+      } catch (e) {}
+    }
+    loadPatrolCount();
+    setInterval(loadPatrolCount, 30000);
   </script>
 </body>
 

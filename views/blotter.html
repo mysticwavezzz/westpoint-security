@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Site Map | Westpoint Security</title>
+  <title>Public Incident Blotter | Westpoint Security</title>
   <link rel="icon" href="/assets/favicon.png" />
   <link rel="stylesheet" href="/css/style.css" />
 </head>
@@ -53,46 +53,45 @@
 
     <main class="main-layout" id="main-content" tabindex="-1">
       <article class="main-content">
-        <h1>Site Map</h1>
+        <h1>Public Incident Blotter</h1>
+        <p class="lead-copy">
+          A public log of recent patrol activity in Harrison County. Officer names, citizen names, and incident details are withheld here for privacy - full records are available to Command and Internal Affairs staff only.
+        </p>
+
         <section class="content-box">
-          <h2>Navigation</h2>
+          <h2>Recent Entries</h2>
           <div class="content-box-body">
-            <ul style="padding-left: 20px; line-height: 1.8;">
-              <li><a href="/">HOME</a></li>
-              <li><a href="/about">ABOUT WESTPOINT</a></li>
-              <li><a href="/services">SERVICES</a>
-                <ul>
-                  <li><a href="/services#event">Event Security</a></li>
-                  <li><a href="/services#private">Private Security</a></li>
-                  <li><a href="/services#contracted">Contracted Security (Building)</a></li>
-                </ul>
-              </li>
-              <li><a href="/service-area">SERVICE AREA</a></li>
-              <li><a href="/careers">CAREERS</a></li>
-              <li><a href="/newsroom">NEWSROOM</a></li>
-              <li><a href="/blotter">PUBLIC INCIDENT BLOTTER</a></li>
-              <li><a href="/contact">CONTACT &amp; REPORTS</a></li>
-              <li><a href="/contact?mode=misconduct">REPORT MISCONDUCT (INTAKE)</a></li>
-              <li><a href="/terms">TERMS OF SERVICE</a></li>
-              <li><a href="/privacy">PRIVACY POLICY</a></li>
-              <li><a href="/employee">EMPLOYEE ACCESS</a></li>
-            </ul>
+            <div class="period-table-wrap">
+              <table class="period-table">
+                <thead>
+                  <tr>
+                    <th>Case No.</th>
+                    <th>Date</th>
+                    <th>Location</th>
+                    <th>Action Type</th>
+                  </tr>
+                </thead>
+                <tbody id="blotterTableBody">
+                  <tr><td colspan="4" class="table-empty-msg">Loading blotter entries...</td></tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </section>
       </article>
     </main>
     <footer class="site-footer">
       <nav aria-label="Footer navigation">
-        <a href="/">HOME</a> | 
-        <a href="/about">ABOUT WESTPOINT</a> | 
-        <a href="/services">SERVICES</a> | 
-        <a href="/service-area">SERVICE AREA</a> | 
-        <a href="/careers">CAREERS</a> | 
-        <a href="/newsroom">NEWSROOM</a> | 
-        <a href="/contact">CONTACT &amp; REPORTS</a> | 
-        <a href="/terms">TERMS OF SERVICE</a> | 
-        <a href="/privacy">PRIVACY POLICY</a> | 
-        <a href="/site-map">SITE MAP</a> | 
+        <a href="/">HOME</a> |
+        <a href="/about">ABOUT WESTPOINT</a> |
+        <a href="/services">SERVICES</a> |
+        <a href="/service-area">SERVICE AREA</a> |
+        <a href="/careers">CAREERS</a> |
+        <a href="/newsroom">NEWSROOM</a> |
+        <a href="/contact">CONTACT &amp; REPORTS</a> |
+        <a href="/terms">TERMS OF SERVICE</a> |
+        <a href="/privacy">PRIVACY POLICY</a> |
+        <a href="/site-map">SITE MAP</a> |
         <a href="/employee">EMPLOYEE ACCESS</a>
       </nav>
       <p>
@@ -106,5 +105,34 @@
       <p class="last-updated">Last Updated: September 4, 2026</p>
     </footer>
   </div>
+
+  <script>
+    function escapeHtml(str) {
+      return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    async function loadBlotter() {
+      const tbody = document.getElementById('blotterTableBody');
+      try {
+        const res = await fetch('/api/public/blotter');
+        const data = await res.json();
+        if (!data.blotter || data.blotter.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="4" class="table-empty-msg">No entries on file.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = data.blotter.map(row => `
+          <tr>
+            <td style="font-family: monospace;">${escapeHtml(row.id)}</td>
+            <td>${escapeHtml(row.date)}</td>
+            <td>${escapeHtml(row.location)}</td>
+            <td>${escapeHtml(row.action)}</td>
+          </tr>
+        `).join('');
+      } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="4" class="table-empty-msg">Unable to load the blotter right now.</td></tr>';
+      }
+    }
+    loadBlotter();
+  </script>
 </body>
+
 </html>

@@ -277,8 +277,21 @@ const ROUTE_VIEWS = {
   '/privacy': 'privacy.html',
   '/employee': 'employee.html',
   '/employee/dashboard': 'employee-dashboard.html',
-  '/site-map': 'site-map.html'
+  '/site-map': 'site-map.html',
+  '/blotter': 'blotter.html'
 };
+
+function serveViewFile(res, filename) {
+  const filePath = path.join(VIEWS_DIR, filename);
+  fs.readFile(filePath, (err, data) => {
+    if (err) {
+      res.writeHead(500, { 'Content-Type': 'text/plain', ...SECURITY_HEADERS });
+      return res.end('500 Server Error');
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...SECURITY_HEADERS });
+    res.end(data);
+  });
+}
 
 // Database Connection Helper
 let botDbInstance = null;
@@ -1157,6 +1170,24 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
+  // API: GET /api/public/blotter (Public - redacted incident blotter).
+  // Strips everything that identifies a specific officer, suspect, or
+  // citizen (officer, officerId, rank, suspect, and the free-text summary,
+  // which officers write themselves and could name either) - only the
+  // incident type, general location, and date are public information here.
+  if (pathname === '/api/public/blotter' && req.method === 'GET') {
+    const allIncidents = readJSONFile('incidents.json', []);
+    const redacted = allIncidents
+      .slice(0, 100)
+      .map(inc => ({
+        id: inc.id,
+        date: (inc.timestamp || '').split('T')[0],
+        location: inc.location || 'Harrison County',
+        action: inc.action || 'Standard Patrol Action'
+      }));
+    return sendJSON(res, 200, { blotter: redacted });
+  }
+
   // 6. API: GET /api/officer/incidents
   if (pathname === '/api/officer/incidents' && req.method === 'GET') {
     if (!currentSession || !currentSession.permissions.isOfficer) return sendJSON(res, 401, { error: 'Unauthorized' });
@@ -1221,6 +1252,24 @@ const server = http.createServer(async (req, res) => {
     if (reports.length > 500) reports.length = 500;
     writeJSONFile('reports.json', reports);
     return sendJSON(res, 200, { success: true, record: report });
+  }
+
+  // API: GET /api/report/:id/status (Public - citizen status lookup by their
+  // DESK-###### ID, like a package tracking number). No auth required since
+  // possessing the exact random ID is itself the credential - deliberately
+  // returns only status/type/date, never the report body, officer name, or
+  // IA findings, which stay staff-only via /api/ia/reports.
+  if (pathname.startsWith('/api/report/') && pathname.endsWith('/status') && req.method === 'GET') {
+    const reportId = pathname.slice('/api/report/'.length, -'/status'.length).toUpperCase();
+    const reports = readJSONFile('reports.json', []);
+    const found = reports.find(r => r.id.toUpperCase() === reportId);
+    if (!found) return sendJSON(res, 404, { error: 'No report found with that ID.' });
+    return sendJSON(res, 200, {
+      id: found.id,
+      type: found.type,
+      status: found.status,
+      submitted: (found.timestamp || '').split('T')[0]
+    });
   }
 
   // 8B. API: POST /api/contact/staff (Reach Out to Staff Form)
@@ -1404,10 +1453,36 @@ const server = http.createServer(async (req, res) => {
     return sendJSON(res, 200, { actions });
   }
 
+  // API: GET /api/public/patrol-count (Public - live "X officers on patrol"
+  // counter for the homepage). Counts active_sessions directly rather than
+  // going through /api/duty-roster (which requires isOfficer) - this is
+  // deliberately public and reveals nothing beyond a headcount.
+  if (pathname === '/api/public/patrol-count' && req.method === 'GET') {
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 200, { count: 0 });
+    try {
+      const row = db.prepare('SELECT COUNT(*) AS c FROM active_sessions').get();
+      return sendJSON(res, 200, { count: row?.c || 0 });
+    } catch (e) {
+      return sendJSON(res, 200, { count: 0 });
+    }
+  }
+
   // 13. API: GET /api/news (Public News List)
   if (pathname === '/api/news' && req.method === 'GET') {
     const news = readJSONFile('news.json', []);
     return sendJSON(res, 200, { news });
+  }
+
+  // 13B. API: GET /api/news/:id (Public - single article, for the permalink
+  // page). Placed before the general /api/news/:id DELETE check further
+  // down doesn't apply here since that's method-gated to DELETE only.
+  if (pathname.startsWith('/api/news/') && req.method === 'GET') {
+    const articleId = pathname.slice('/api/news/'.length);
+    const news = readJSONFile('news.json', []);
+    const article = news.find(n => n.id === articleId);
+    if (!article) return sendJSON(res, 404, { error: 'Article not found' });
+    return sendJSON(res, 200, { article });
   }
 
   // 14. API: POST /api/news (Command Only - Publish Bulletin)
@@ -1422,7 +1497,10 @@ const server = http.createServer(async (req, res) => {
       author: currentSession.displayName,
       date: new Date().toISOString().split('T')[0],
       category: String(body.category || 'Department Notice').trim().slice(0, 100),
-      summary: String(body.summary || '').trim().slice(0, 2000)
+      summary: String(body.summary || '').trim().slice(0, 2000),
+      // Full article body for the permalink page - summary alone (capped at
+      // 2000 chars, meant for list previews) stays as the list-view excerpt.
+      content: String(body.content || '').trim().slice(0, 10000)
     };
 
     const news = readJSONFile('news.json', []);
@@ -1970,6 +2048,14 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/employee' && currentSession && currentSession.permissions.isOfficer) {
     res.writeHead(302, { 'Location': '/employee/dashboard', ...SECURITY_HEADERS });
     return res.end();
+  }
+
+  // News article permalink: /news/NEWS-1234 - the page itself is a static
+  // shell (news-article.html) that fetches /api/news/:id client-side, same
+  // pattern as every other view in this app.
+  if (pathname.startsWith('/news/') && pathname.length > '/news/'.length) {
+    serveViewFile(res, 'news-article.html');
+    return;
   }
 
   if (ROUTE_VIEWS[pathname]) {
