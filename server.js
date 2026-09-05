@@ -16,6 +16,12 @@ const PUBLIC_DIR = fs.existsSync(path.join(BASE_DIR, 'public')) ? path.join(BASE
 // sessions/reports/incidents survive redeploys instead of living on the
 // container's ephemeral disk, which gets wiped on every deploy otherwise.
 const DATA_DIR = process.env.DATA_DIR || path.join(BASE_DIR, 'data');
+let webpush = null;
+try {
+  webpush = require('web-push');
+} catch (e) {
+  console.warn('[WEB-PUSH] web-push package not loaded');
+}
 const robloxService = require('./lib/robloxService.js');
 const r2 = require('./lib/r2.js');
 const video = require('./lib/video.js');
@@ -26,6 +32,55 @@ const { REST: DiscordREST, Routes: DiscordRoutes } = require('discord.js');
 // actually reachable on disk — override with BOT_DB_PATH in .env for any
 // other host (e.g. if the bot and portal are later deployed to the same box).
 const BOT_DB_PATH = process.env.BOT_DB_PATH || 'C:/Users/Nolan/Documents/antigravity/resilient-meitner/bot.db';
+
+
+let vapidKeys = null;
+function getVapidKeys() {
+  if (vapidKeys) return vapidKeys;
+  const vapidFile = path.join(DATA_DIR, 'vapid.json');
+  if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+    vapidKeys = {
+      publicKey: process.env.VAPID_PUBLIC_KEY,
+      privateKey: process.env.VAPID_PRIVATE_KEY
+    };
+  } else if (fs.existsSync(vapidFile)) {
+    try {
+      vapidKeys = JSON.parse(fs.readFileSync(vapidFile, 'utf8'));
+    } catch (e) {}
+  }
+  if (!vapidKeys || !vapidKeys.publicKey) {
+    if (webpush && typeof webpush.generateVAPIDKeys === 'function') {
+      vapidKeys = webpush.generateVAPIDKeys();
+      try {
+        if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+        fs.writeFileSync(vapidFile, JSON.stringify(vapidKeys, null, 2), 'utf8');
+      } catch (e) {}
+    } else {
+      vapidKeys = {
+        publicKey: 'BNxM_SAMPLE_KEY_WESTPOINT_PUBLIC_VAPID_OVERRIDE_KEY',
+        privateKey: 'SAMPLE_PRIVATE_KEY'
+      };
+    }
+  }
+  if (webpush && vapidKeys.publicKey && vapidKeys.privateKey && !vapidKeys.publicKey.startsWith('BNxM_SAMPLE')) {
+    try {
+      webpush.setVapidDetails(
+        'mailto:admin@westpointsecurity.xyz',
+        vapidKeys.publicKey,
+        vapidKeys.privateKey
+      );
+    } catch (e) {}
+  }
+  return vapidKeys;
+}
+
+const FTO_STAGES = [
+  'Orientation & Equipment',
+  'Radio & Code Protocols',
+  'Vehicle & Patrol Procedures',
+  'Incident Documentation & Evidence',
+  'Solo Patrol Readiness'
+];
 
 // Simple .env Loader
 function loadEnv() {
@@ -404,6 +459,51 @@ function getBotDb() {
         channel_id TEXT NOT NULL,
         created_at INTEGER NOT NULL
       );
+      
+      CREATE TABLE IF NOT EXISTS fto_assignments (
+        id TEXT PRIMARY KEY,
+        trainee_id TEXT NOT NULL,
+        trainee_username TEXT,
+        trainer_id TEXT NOT NULL,
+        trainer_username TEXT,
+        assigned_at INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        assigned_by TEXT
+      );
+      CREATE TABLE IF NOT EXISTS fto_signoffs (
+        id TEXT PRIMARY KEY,
+        trainee_id TEXT NOT NULL,
+        stage TEXT NOT NULL,
+        signed_off_by TEXT NOT NULL,
+        signed_off_by_id TEXT,
+        signed_off_at INTEGER NOT NULL,
+        notes TEXT
+      );
+      CREATE TABLE IF NOT EXISTS staff_flags (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        flag_type TEXT NOT NULL,
+        label TEXT NOT NULL,
+        reason TEXT,
+        created_by TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        endpoint TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        keys_p256dh TEXT NOT NULL,
+        keys_auth TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS bodycam_reviews (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        reviewer_id TEXT NOT NULL,
+        reviewer_name TEXT NOT NULL,
+        status TEXT NOT NULL,
+        notes TEXT,
+        reviewed_at INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS video_channel_clears (
         week_key TEXT PRIMARY KEY,
         cleared_at INTEGER NOT NULL
@@ -431,6 +531,22 @@ function getBotDb() {
     try {
       botDbInstance.exec('ALTER TABLE staff_members ADD COLUMN last_known_rank TEXT');
     } catch (e) {}
+    try {
+      botDbInstance.exec('ALTER TABLE bodycam_sessions ADD COLUMN tags TEXT');
+    } catch (e) {}
+    try {
+      botDbInstance.exec('ALTER TABLE bodycam_sessions ADD COLUMN review_status TEXT DEFAULT "unreviewed"');
+    } catch (e) {}
+    try {
+      botDbInstance.exec('ALTER TABLE bodycam_sessions ADD COLUMN review_notes TEXT');
+    } catch (e) {}
+    try {
+      botDbInstance.exec('ALTER TABLE bodycam_sessions ADD COLUMN reviewed_by TEXT');
+    } catch (e) {}
+    try {
+      botDbInstance.exec('ALTER TABLE bodycam_sessions ADD COLUMN reviewed_at INTEGER');
+    } catch (e) {}
+
     return botDbInstance;
   } catch (e) {
     console.error('[DATABASE CONNECT ERROR]', e.message);
@@ -1255,12 +1371,28 @@ const server = http.createServer(async (req, res) => {
     const db = getBotDb();
     if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
     const rows = db.prepare('SELECT * FROM staff_members ORDER BY roblox_username COLLATE NOCASE ASC').all();
+    let flagsByUser = {};
+    try {
+      const flags = db.prepare('SELECT * FROM staff_flags').all();
+      flags.forEach(f => {
+        if (!flagsByUser[f.user_id]) flagsByUser[f.user_id] = [];
+        flagsByUser[f.user_id].push({
+          id: f.id,
+          flagType: f.flag_type,
+          label: f.label,
+          reason: f.reason,
+          createdBy: f.created_by,
+          createdAt: f.created_at
+        });
+      });
+    } catch (e) {}
     return sendJSON(res, 200, {
       staff: rows.map(r => ({
         userId: r.user_id,
         robloxUsername: r.roblox_username || 'Unknown',
         rank: r.last_known_rank || 'Unranked',
-        lastActive: r.updated_at
+        lastActive: r.updated_at,
+        flags: flagsByUser[r.user_id] || []
       }))
     });
   }
@@ -1375,6 +1507,305 @@ const server = http.createServer(async (req, res) => {
     const byAction = Object.keys(actionCounts).map(a => ({ action: a, count: actionCounts[a] })).sort((a, b) => b.count - a.count);
 
     return sendJSON(res, 200, { byMonth, byAction, totalIncidents: allIncidents.length });
+  }
+
+
+  // API: GET /api/officer/stats (Authenticated Officer - Personal Career Stats)
+  if (pathname === '/api/officer/stats' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isOfficer) {
+      return sendJSON(res, 401, { error: 'Unauthorized: Officer session required' });
+    }
+    const db = getBotDb();
+    let allTimeShifts = 0;
+    let allTimeSeconds = 0;
+    let longestShiftSeconds = 0;
+    let currentWeekSeconds = 0;
+    const weekKey = getWeekKey();
+
+    if (db) {
+      try {
+        const stats = db.prepare('SELECT COUNT(*) as count, COALESCE(SUM(duration_seconds), 0) as total, COALESCE(MAX(duration_seconds), 0) as longest FROM shift_history WHERE user_id = ?').get(currentSession.id);
+        if (stats) {
+          allTimeShifts = stats.count || 0;
+          allTimeSeconds = stats.total || 0;
+          longestShiftSeconds = stats.longest || 0;
+        }
+        const weekly = db.prepare('SELECT total_seconds FROM weekly_totals WHERE user_id = ? AND week_key = ?').get(currentSession.id, weekKey);
+        if (weekly) {
+          currentWeekSeconds = weekly.total_seconds || 0;
+        }
+      } catch (e) {
+        console.error('[OFFICER STATS DB ERROR]', e.message);
+      }
+    }
+
+    const incidents = readJSONFile('incidents.json', []);
+    const incidentsFiled = incidents.filter(i => i.officerId === currentSession.id).length;
+
+    const quotaTargetSeconds = currentSession.quotaTargetSeconds || 900;
+    const quotaMet = currentWeekSeconds >= quotaTargetSeconds;
+    const quotaPercent = quotaTargetSeconds > 0 ? Math.min(999, Math.round((currentWeekSeconds / quotaTargetSeconds) * 100)) : 100;
+
+    return sendJSON(res, 200, {
+      allTimeShifts,
+      allTimeSeconds,
+      allTimeFormatted: formatDuration(allTimeSeconds),
+      longestShiftSeconds,
+      longestShiftFormatted: formatDuration(longestShiftSeconds),
+      currentWeekSeconds,
+      currentWeekFormatted: formatDuration(currentWeekSeconds),
+      quotaTargetSeconds,
+      quotaTargetFormatted: formatDuration(quotaTargetSeconds),
+      quotaMet,
+      quotaPercent,
+      incidentsFiled
+    });
+  }
+
+  // API: GET /api/fto/progress (Authenticated Officer - Checklist progress)
+  if (pathname === '/api/fto/progress' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isOfficer) {
+      return sendJSON(res, 401, { error: 'Unauthorized' });
+    }
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+
+    const queryTraineeId = parsedUrl.query.traineeId ? String(parsedUrl.query.traineeId).trim() : null;
+    let targetTrainee = currentSession.id;
+    if (queryTraineeId && queryTraineeId !== currentSession.id) {
+      if (!currentSession.permissions.isSupervisor) {
+        // Check if current session is assigned trainer
+        const assign = db.prepare('SELECT id FROM fto_assignments WHERE trainee_id = ? AND trainer_id = ? AND status = "active"').get(queryTraineeId, currentSession.id);
+        if (!assign) {
+          return sendJSON(res, 403, { error: 'Access Denied: Supervisor or assigned trainer permissions required.' });
+        }
+      }
+      targetTrainee = queryTraineeId;
+    }
+
+    const assignment = db.prepare('SELECT * FROM fto_assignments WHERE trainee_id = ? AND status = "active" ORDER BY assigned_at DESC LIMIT 1').get(targetTrainee) || null;
+    const signoffs = db.prepare('SELECT * FROM fto_signoffs WHERE trainee_id = ?').all(targetTrainee);
+    const signoffMap = {};
+    signoffs.forEach(s => { signoffMap[s.stage] = s; });
+
+    const stages = FTO_STAGES.map(stage => {
+      const match = signoffMap[stage];
+      return {
+        stage,
+        completed: !!match,
+        signedOffBy: match ? match.signed_off_by : null,
+        signedOffAt: match ? match.signed_off_at : null,
+        notes: match ? match.notes : ''
+      };
+    });
+
+    const completedCount = stages.filter(s => s.completed).length;
+    return sendJSON(res, 200, {
+      traineeId: targetTrainee,
+      assignment,
+      stages,
+      completedCount,
+      totalStages: FTO_STAGES.length,
+      isCertified: completedCount === FTO_STAGES.length
+    });
+  }
+
+  // API: POST /api/fto/signoff (Supervisor or Assigned Trainer)
+  if (pathname === '/api/fto/signoff' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isOfficer) {
+      return sendJSON(res, 401, { error: 'Unauthorized' });
+    }
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+
+    const body = await parseBody(req);
+    const traineeId = String(body.traineeId || '').trim();
+    const stage = String(body.stage || '').trim();
+    const notes = String(body.notes || '').trim().slice(0, 1000);
+
+    if (!traineeId || !stage) {
+      return sendJSON(res, 400, { error: 'Missing trainee ID or stage' });
+    }
+    if (!FTO_STAGES.includes(stage)) {
+      return sendJSON(res, 400, { error: 'Invalid FTO training stage' });
+    }
+
+    // Permission check
+    let authorized = currentSession.permissions.isSupervisor;
+    if (!authorized) {
+      const assign = db.prepare('SELECT id FROM fto_assignments WHERE trainee_id = ? AND trainer_id = ? AND status = "active"').get(traineeId, currentSession.id);
+      if (assign) authorized = true;
+    }
+    if (!authorized) {
+      return sendJSON(res, 403, { error: 'Access Denied: You must be a Supervisor or the assigned Trainer to sign off stages.' });
+    }
+
+    const signoffId = 'FTO-' + crypto.randomBytes(8).toString('hex');
+    db.prepare(`
+      INSERT INTO fto_signoffs (id, trainee_id, stage, signed_off_by, signed_off_by_id, signed_off_at, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(signoffId, traineeId, stage, currentSession.displayName, currentSession.id, Date.now(), notes);
+
+    // Discord notification
+    if (DISCORD_BOT_TOKEN) {
+      const embed = {
+        title: 'FTO Stage Sign-off Completed',
+        color: 0x3498DB,
+        description: `**Trainee:** <@${traineeId}>
+**Trainer:** ${currentSession.displayName} (<@${currentSession.id}>)
+**Stage:** ${stage}
+**Notes:** ${notes || 'Demonstrated proficiency.'}`,
+        footer: { text: 'Westpoint Field Training Program' },
+        timestamp: new Date().toISOString()
+      };
+      postDiscordMessage(AUDIT_LOGS_CHANNEL_ID, embed).catch(() => {});
+    }
+
+    return sendJSON(res, 200, { success: true, stage, traineeId });
+  }
+
+  // API: POST /api/admin/fto/assign (Supervisor / Command)
+  if (pathname === '/api/admin/fto/assign' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isSupervisor) {
+      return sendJSON(res, 403, { error: 'Access Denied: Supervisor or Command rank required.' });
+    }
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+
+    const body = await parseBody(req);
+    const traineeId = String(body.traineeId || '').trim();
+    const traineeUsername = String(body.traineeUsername || 'Trainee').trim();
+    const trainerId = String(body.trainerId || '').trim();
+    const trainerUsername = String(body.trainerUsername || 'Trainer').trim();
+
+    if (!traineeId || !trainerId) {
+      return sendJSON(res, 400, { error: 'Missing trainee ID or trainer ID' });
+    }
+
+    // Mark previous assignments inactive
+    db.prepare('UPDATE fto_assignments SET status = "reassigned" WHERE trainee_id = ? AND status = "active"').run(traineeId);
+
+    const assignId = 'FTOA-' + crypto.randomBytes(8).toString('hex');
+    db.prepare(`
+      INSERT INTO fto_assignments (id, trainee_id, trainee_username, trainer_id, trainer_username, assigned_at, status, assigned_by)
+      VALUES (?, ?, ?, ?, ?, ?, 'active', ?)
+    `).run(assignId, traineeId, traineeUsername, trainerId, trainerUsername, Date.now(), currentSession.displayName);
+
+    return sendJSON(res, 200, { success: true, assignId });
+  }
+
+  // API: GET /api/admin/fto/trainees (Supervisor / Command)
+  if (pathname === '/api/admin/fto/trainees' && req.method === 'GET') {
+    if (!currentSession || !currentSession.permissions.isSupervisor) {
+      return sendJSON(res, 403, { error: 'Access Denied: Supervisor rank required.' });
+    }
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+
+    const trainees = [];
+    try {
+      const assignments = db.prepare('SELECT * FROM fto_assignments WHERE status = "active"').all();
+      for (const a of assignments) {
+        const signoffs = db.prepare('SELECT COUNT(*) as count FROM fto_signoffs WHERE trainee_id = ?').get(a.trainee_id);
+        const count = signoffs ? signoffs.count : 0;
+        trainees.push({
+          traineeId: a.trainee_id,
+          traineeUsername: a.trainee_username,
+          trainerId: a.trainer_id,
+          trainerUsername: a.trainer_username,
+          assignedAt: a.assigned_at,
+          completedStages: count,
+          totalStages: FTO_STAGES.length,
+          isCertified: count >= FTO_STAGES.length
+        });
+      }
+    } catch (e) {
+      console.error('[FTO TRAINEES DB ERROR]', e.message);
+    }
+    return sendJSON(res, 200, { trainees });
+  }
+
+  // API: POST /api/admin/staff-flags (Command / IA Only)
+  if (pathname === '/api/admin/staff-flags' && req.method === 'POST') {
+    if (!currentSession || (!currentSession.permissions.isCommand && !currentSession.permissions.isInternalAffairs)) {
+      return sendJSON(res, 403, { error: 'Access Denied: Command or Internal Affairs rank required.' });
+    }
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+
+    const body = await parseBody(req);
+    const action = body.action || 'add';
+
+    if (action === 'remove') {
+      const flagId = String(body.flagId || '').trim();
+      if (!flagId) return sendJSON(res, 400, { error: 'Missing flag ID' });
+      db.prepare('DELETE FROM staff_flags WHERE id = ?').run(flagId);
+      return sendJSON(res, 200, { success: true });
+    }
+
+    const userId = String(body.userId || '').trim();
+    const flagType = String(body.flagType || 'custom').toLowerCase();
+    const label = String(body.label || 'Staff Note').trim().slice(0, 100);
+    const reason = String(body.reason || '').trim().slice(0, 1000);
+
+    if (!userId || !label) {
+      return sendJSON(res, 400, { error: 'Missing user ID or flag label' });
+    }
+    if (!['commendation', 'watch', 'restriction', 'custom'].includes(flagType)) {
+      return sendJSON(res, 400, { error: 'Invalid flag type' });
+    }
+
+    const flagId = 'FLG-' + crypto.randomBytes(8).toString('hex');
+    db.prepare(`
+      INSERT INTO staff_flags (id, user_id, flag_type, label, reason, created_by, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(flagId, userId, flagType, label, reason, currentSession.displayName, Date.now());
+
+    return sendJSON(res, 200, { success: true, flagId });
+  }
+
+  // API: GET /api/push/vapid-public-key (Public/Officer)
+  if (pathname === '/api/push/vapid-public-key' && req.method === 'GET') {
+    const keys = getVapidKeys();
+    return sendJSON(res, 200, { publicKey: keys.publicKey });
+  }
+
+  // API: POST /api/push/subscribe (Officer Push Subscription)
+  if (pathname === '/api/push/subscribe' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isOfficer) {
+      return sendJSON(res, 401, { error: 'Unauthorized: Officer login required' });
+    }
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+
+    const body = await parseBody(req);
+    const sub = body.subscription;
+    if (!sub || !sub.endpoint || !sub.keys || !sub.keys.p256dh || !sub.keys.auth) {
+      return sendJSON(res, 400, { error: 'Invalid push subscription payload' });
+    }
+
+    db.prepare(`
+      INSERT OR REPLACE INTO push_subscriptions (endpoint, user_id, keys_p256dh, keys_auth, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(sub.endpoint, currentSession.id, sub.keys.p256dh, sub.keys.auth, Date.now());
+
+    return sendJSON(res, 200, { success: true });
+  }
+
+  // API: POST /api/push/unsubscribe
+  if (pathname === '/api/push/unsubscribe' && req.method === 'POST') {
+    if (!currentSession || !currentSession.permissions.isOfficer) {
+      return sendJSON(res, 401, { error: 'Unauthorized: Officer login required' });
+    }
+    const db = getBotDb();
+    if (!db) return sendJSON(res, 500, { error: 'Database unavailable' });
+
+    const body = await parseBody(req);
+    const endpoint = String(body.endpoint || '').trim();
+    if (endpoint) {
+      db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').run(endpoint);
+    }
+    return sendJSON(res, 200, { success: true });
   }
 
   // 6. API: GET /api/officer/incidents

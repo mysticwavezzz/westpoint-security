@@ -77,13 +77,58 @@
           <button type="button" class="dash-tab-btn" onclick="switchTab('incidents')">3. Incident Archive</button>
           <button type="button" class="dash-tab-btn" id="tabBtnIA" style="display: none;" onclick="switchTab('ia')">4. Internal Affairs Desk</button>
           <button type="button" class="dash-tab-btn" id="tabBtnStaffDirectory" onclick="switchTab('staff-directory')">5. Staff Directory</button>
-          <button type="button" class="dash-tab-btn" id="tabBtnCommand" style="display: none;" onclick="switchTab('command')">6. Command Center</button>
+          <button type="button" class="dash-tab-btn" id="tabBtnFTO" onclick="switchTab('fto')">6. Field Training (FTO)</button>
+          <button type="button" class="dash-tab-btn" id="tabBtnCommand" style="display: none;" onclick="switchTab('command')">7. Command Center</button>
         </div>
 
         <!-- ==============================================
              TAB 1: FIELD STATION
              ============================================== -->
         <section id="tab-field" class="dash-section is-active">
+
+          <!-- Officer Career Stats & Notifications Banner -->
+          <div class="content-box" style="margin-bottom: 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #CFD8DC; padding-bottom: 8px; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
+              <h2 style="border: none; margin: 0; padding: 0;">Officer Career Metrics &amp; Push Alerts</h2>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span id="pushStatusPill" class="status-pill status-pill-yellow">PUSH ALERTS OFF</span>
+                <button type="button" class="period-button period-button-secondary" id="btnTogglePush" style="font-size: 10px; padding: 4px 8px;" onclick="togglePushNotifications()">[ 🔔 ENABLE PUSH ALERTS ]</button>
+              </div>
+            </div>
+            <div class="content-box-body" style="padding-top: 0;">
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px;">
+                <div style="background: var(--bg-surface-alt, #ECEFF1); border: 1px solid var(--border-color, #CFD8DC); padding: 10px; border-radius: 2px;">
+                  <span style="font-size: 10px; color: #546675; text-transform: uppercase; font-weight: 700;">Weekly Quota Progress</span>
+                  <div id="statQuotaFormatted" style="font-size: 15px; font-weight: bold; color: #1E252D; margin-top: 4px;">0s / 15m</div>
+                  <div style="margin-top: 6px; background: #CFD8DC; height: 6px; border-radius: 3px; overflow: hidden;">
+                    <div id="statQuotaBar" style="background: #1B5E20; width: 0%; height: 100%; transition: width 0.3s ease;"></div>
+                  </div>
+                  <span id="statQuotaStatus" style="font-size: 9.5px; color: #546675; margin-top: 4px; display: inline-block;">0% Complete</span>
+                </div>
+                <div style="background: var(--bg-surface-alt, #ECEFF1); border: 1px solid var(--border-color, #CFD8DC); padding: 10px; border-radius: 2px;">
+                  <span style="font-size: 10px; color: #546675; text-transform: uppercase; font-weight: 700;">All-Time Duty Shifts</span>
+                  <div id="statAllTimeShifts" style="font-size: 15px; font-weight: bold; color: #1E252D; margin-top: 4px;">0</div>
+                  <span style="font-size: 9.5px; color: #546675;">Completed Patrols</span>
+                </div>
+                <div style="background: var(--bg-surface-alt, #ECEFF1); border: 1px solid var(--border-color, #CFD8DC); padding: 10px; border-radius: 2px;">
+                  <span style="font-size: 10px; color: #546675; text-transform: uppercase; font-weight: 700;">Total Career Time</span>
+                  <div id="statAllTimeHours" style="font-size: 15px; font-weight: bold; color: #1E252D; margin-top: 4px;">0s</div>
+                  <span style="font-size: 9.5px; color: #546675;">Cumulative Patrol Time</span>
+                </div>
+                <div style="background: var(--bg-surface-alt, #ECEFF1); border: 1px solid var(--border-color, #CFD8DC); padding: 10px; border-radius: 2px;">
+                  <span style="font-size: 10px; color: #546675; text-transform: uppercase; font-weight: 700;">Longest Duty Shift</span>
+                  <div id="statLongestShift" style="font-size: 15px; font-weight: bold; color: #1E252D; margin-top: 4px;">0s</div>
+                  <span style="font-size: 9.5px; color: #546675;">Single Continuous Shift</span>
+                </div>
+                <div style="background: var(--bg-surface-alt, #ECEFF1); border: 1px solid var(--border-color, #CFD8DC); padding: 10px; border-radius: 2px;">
+                  <span style="font-size: 10px; color: #546675; text-transform: uppercase; font-weight: 700;">Field Incidents Filed</span>
+                  <div id="statIncidentsFiled" style="font-size: 15px; font-weight: bold; color: #1E252D; margin-top: 4px;">0</div>
+                  <span style="font-size: 9.5px; color: #546675;">Submitted Case Dockets</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="feature-grid">
             <!-- Personal Shift Logger -->
             <section class="content-box">
@@ -392,6 +437,8 @@
                       <th>Rank</th>
                       <th>Discord User ID</th>
                       <th>Last Active</th>
+                      <th>Flags &amp; Badges</th>
+                      <th id="thStaffFlagActions" style="display: none;">Action</th>
                     </tr>
                   </thead>
                   <tbody id="staffDirectoryTableBody">
@@ -407,6 +454,91 @@
         <!-- ==============================================
              TAB 5: COMMAND STAFF CENTER (HIGH COMMAND)
              ============================================== -->
+        
+        <!-- ==============================================
+             TAB: FIELD TRAINING OFFICER (FTO) PROGRAM
+             ============================================== -->
+        <section id="tab-fto" class="dash-section">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <p style="margin: 0; font-size: 12px; color: #546675;">
+              Field Training Officer (FTO) Program checklist, stage evaluation records, and certification tracking.
+            </p>
+            <button type="button" class="period-button period-button-secondary" onclick="loadFTOProgress()">[ REFRESH FTO ]</button>
+          </div>
+
+          <!-- Trainee Checklist -->
+          <section class="content-box" style="margin-bottom: 14px;">
+            <h2>Personal Field Training Checklist &amp; Syllabus</h2>
+            <div class="content-box-body">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+                <div>
+                  <strong style="font-size: 13px;">Training Status: </strong>
+                  <span id="ftoStatusBadge" class="status-pill status-pill-yellow">IN TRAINING</span>
+                  <span id="ftoAssignedTrainerText" style="margin-left: 12px; font-size: 11px; color: #546675;">Trainer: None Assigned</span>
+                </div>
+                <div style="font-size: 12px; font-weight: 700;">
+                  Progress: <span id="ftoProgressRatio">0 / 5</span> Stages (<span id="ftoProgressPct">0%</span>)
+                </div>
+              </div>
+              <div style="background: #CFD8DC; height: 8px; border-radius: 4px; overflow: hidden; margin-bottom: 14px;">
+                <div id="ftoProgressBar" style="background: #2E7D32; width: 0%; height: 100%; transition: width 0.3s ease;"></div>
+              </div>
+
+              <div id="ftoStagesList" style="display: flex; flex-direction: column; gap: 10px;">
+                <!-- Dynamically rendered -->
+              </div>
+            </div>
+          </section>
+
+          <!-- Supervisor & Trainer Assignment Management -->
+          <section class="content-box" id="ftoSupervisorSection" style="display: none;">
+            <h2>Supervisor FTO Management &amp; Assignments</h2>
+            <div class="content-box-body">
+              <form class="period-form" id="ftoAssignForm" onsubmit="submitFTOAssignment(event)" style="margin-bottom: 16px;">
+                <fieldset>
+                  <legend>Assign Field Training Officer</legend>
+                  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px;">
+                    <label>Probationary Trainee (Discord ID):
+                      <input type="text" id="ftoAssignTraineeId" required placeholder="Trainee Discord User ID" />
+                    </label>
+                    <label>Trainee Roblox Username:
+                      <input type="text" id="ftoAssignTraineeName" placeholder="e.g. OfficerCadet" />
+                    </label>
+                    <label>Assigned Trainer (Discord ID):
+                      <input type="text" id="ftoAssignTrainerId" required placeholder="Trainer Discord User ID" />
+                    </label>
+                    <label>Trainer Roblox Username:
+                      <input type="text" id="ftoAssignTrainerName" placeholder="e.g. SeniorOfficer" />
+                    </label>
+                  </div>
+                </fieldset>
+                <div>
+                  <button type="submit" class="period-button">[ ASSIGN TRAINER ]</button>
+                  <span id="ftoAssignStatus" style="margin-left: 8px; font-size: 11px; font-weight: 700;"></span>
+                </div>
+              </form>
+
+              <h3 style="font-size: 12px; margin-top: 14px; margin-bottom: 6px;">Active Trainee Rosters</h3>
+              <div class="period-table-wrap" style="border: none;">
+                <table class="period-table">
+                  <thead>
+                    <tr>
+                      <th>Trainee</th>
+                      <th>Assigned Trainer</th>
+                      <th>Stages Completed</th>
+                      <th>Status</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="ftoTraineesTableBody">
+                    <tr><td colspan="5" class="table-empty-msg">Loading trainee rosters...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </section>
+
         <section id="tab-command" class="dash-section">
           <!-- Command Staff Action Dispatcher -->
           <section class="content-box" style="margin-bottom: 14px;">
@@ -893,6 +1025,10 @@
       if (tabKey === 'staff-directory') {
         document.getElementById('tabBtnStaffDirectory')?.classList.add('is-active');
         loadStaffDirectory();
+      }
+      if (tabKey === 'fto') {
+        document.getElementById('tabBtnFTO')?.classList.add('is-active');
+        loadFTOProgress();
       }
       if (tabKey === 'command') {
         document.getElementById('tabBtnCommand')?.classList.add('is-active');
@@ -1718,6 +1854,10 @@
         const res = await fetch('/api/staff-directory');
         const data = await res.json();
         staffDirectoryAll = data.staff || [];
+        const thAct = document.getElementById('thStaffFlagActions');
+        if (thAct && officerSession && (officerSession.permissions?.isCommand || officerSession.permissions?.isInternalAffairs)) {
+          thAct.style.display = '';
+        }
         renderStaffDirectoryPage(1);
       } catch (e) {
         table.innerHTML = '<tr><td colspan="4" class="table-empty-msg">Error loading staff directory.</td></tr>';
@@ -2256,11 +2396,441 @@
         .replace(/'/g, '&#39;');
     }
 
+    
+    // ============== PHASE 2 CLIENT SCRIPTS ==============
+    // 1. Officer Career Stats
+    async function loadOfficerStats() {
+      try {
+        const res = await fetch('/api/officer/stats');
+        if (!res.ok) return;
+        const s = await res.json();
+
+        document.getElementById('statQuotaFormatted').innerText = s.currentWeekFormatted + ' / ' + s.quotaTargetFormatted;
+        document.getElementById('statQuotaBar').style.width = Math.min(100, s.quotaPercent) + '%';
+        document.getElementById('statQuotaStatus').innerText = s.quotaMet ? 'Compliant (100%)' : s.quotaPercent + '% Complete';
+        document.getElementById('statQuotaStatus').style.color = s.quotaMet ? '#1B5E20' : '#E65100';
+
+        document.getElementById('statAllTimeShifts').innerText = s.allTimeShifts;
+        document.getElementById('statAllTimeHours').innerText = s.allTimeFormatted;
+        document.getElementById('statLongestShift').innerText = s.longestShiftFormatted;
+        document.getElementById('statIncidentsFiled').innerText = s.incidentsFiled;
+      } catch (e) {
+        console.warn('Stats fetch error:', e);
+      }
+    }
+
+    // 2. Browser Push Notifications
+    function urlBase64ToUint8Array(base64String) {
+      const padding = '='.repeat((4 - base64String.length % 4) % 4);
+      const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
+      const rawData = window.atob(base64);
+      const outputArray = new Uint8Array(rawData.length);
+      for (let i = 0; i < rawData.length; ++i) {
+        outputArray[i] = rawData.charCodeAt(i);
+      }
+      return outputArray;
+    }
+
+    function updatePushUI(active) {
+      const pill = document.getElementById('pushStatusPill');
+      const btn = document.getElementById('btnTogglePush');
+      if (active) {
+        pill.innerText = 'PUSH ALERTS ACTIVE';
+        pill.className = 'status-pill status-pill-green';
+        btn.innerText = '[ 🔕 DISABLE ALERTS ]';
+      } else {
+        pill.innerText = 'PUSH ALERTS OFF';
+        pill.className = 'status-pill status-pill-yellow';
+        btn.innerText = '[ 🔔 ENABLE PUSH ALERTS ]';
+      }
+    }
+
+    async function checkPushSubscriptionStatus() {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        const btn = document.getElementById('btnTogglePush');
+        if (btn) btn.style.display = 'none';
+        return;
+      }
+      try {
+        const reg = await navigator.serviceWorker.register('/sw.js');
+        const sub = await reg.pushManager.getSubscription();
+        updatePushUI(!!sub);
+      } catch (e) {
+        console.warn('SW check error:', e);
+      }
+    }
+
+    async function togglePushNotifications() {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        alert('Push notifications are not supported in this browser.');
+        return;
+      }
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          await fetch('/api/push/unsubscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ endpoint: sub.endpoint })
+          });
+          await sub.unsubscribe();
+          updatePushUI(false);
+        } else {
+          const resKey = await fetch('/api/push/vapid-public-key');
+          const { publicKey } = await resKey.json();
+          const perm = await Notification.requestPermission();
+          if (perm !== 'granted') {
+            alert('Notification permission was denied.');
+            return;
+          }
+          const newSub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(publicKey)
+          });
+          await fetch('/api/push/subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ subscription: newSub })
+          });
+          updatePushUI(true);
+        }
+      } catch (err) {
+        alert('Could not update notification subscription: ' + err.message);
+      }
+    }
+
+    // 3. FTO Program Client Logic
+    let currentFTOData = null;
+
+    async function loadFTOProgress(traineeId) {
+      try {
+        const url = traineeId ? `/api/fto/progress?traineeId=${encodeURIComponent(traineeId)}` : '/api/fto/progress';
+        const res = await fetch(url);
+        if (!res.ok) return;
+        const data = await res.json();
+        currentFTOData = data;
+
+        const badge = document.getElementById('ftoStatusBadge');
+        if (data.isCertified) {
+          badge.innerText = 'CERTIFIED SOLO OFFICER';
+          badge.className = 'status-pill status-pill-green';
+        } else {
+          badge.innerText = 'IN TRAINING (' + data.completedCount + '/' + data.totalStages + ')';
+          badge.className = 'status-pill status-pill-yellow';
+        }
+
+        const trainerName = data.assignment ? (data.assignment.trainer_username || data.assignment.trainer_id) : 'None Assigned';
+        document.getElementById('ftoAssignedTrainerText').innerText = 'Trainer: ' + trainerName;
+        document.getElementById('ftoProgressRatio').innerText = data.completedCount + ' / ' + data.totalStages;
+        const pct = Math.round((data.completedCount / data.totalStages) * 100);
+        document.getElementById('ftoProgressPct').innerText = pct + '%';
+        document.getElementById('ftoProgressBar').style.width = pct + '%';
+
+        const canSignOff = officerSession && (officerSession.permissions?.isSupervisor || (data.assignment && data.assignment.trainer_id === officerSession.id));
+
+        const listEl = document.getElementById('ftoStagesList');
+        listEl.innerHTML = data.stages.map((st, idx) => {
+          const pill = st.completed
+            ? '<span class="status-pill status-pill-green">COMPLETED</span>'
+            : '<span class="status-pill status-pill-yellow">PENDING</span>';
+          const signoffInfo = st.completed
+            ? `<div style="font-size: 10.5px; color: #2E7D32; margin-top: 4px;">Signed off by <strong>${escapeHtml(st.signedOffBy)}</strong> on ${new Date(st.signedOffAt).toLocaleDateString()}</div>`
+            : '';
+          const notesInfo = st.notes ? `<div style="font-size: 11px; font-style: italic; color: #546675; margin-top: 2px;">"${escapeHtml(st.notes)}"</div>` : '';
+          const actionBtn = (!st.completed && canSignOff)
+            ? `<button type="button" class="period-button" style="font-size: 9.5px; padding: 4px 8px;" onclick="openFTOSignoffModal('${escapeHtml(data.traineeId)}', '${escapeHtml(st.stage)}')">[ SIGN OFF ]</button>`
+            : '';
+
+          return `
+            <div style="background: var(--bg-surface-alt, #ECEFF1); border: 1px solid var(--border-color, #CFD8DC); padding: 10px 14px; border-radius: 2px; display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+              <div>
+                <div style="font-weight: 700; font-size: 12.5px; color: #1E252D;">${idx + 1}. ${escapeHtml(st.stage)}</div>
+                ${signoffInfo}
+                ${notesInfo}
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                ${pill}
+                ${actionBtn}
+              </div>
+            </div>
+          `;
+        }).join('');
+
+        if (officerSession && officerSession.permissions?.isSupervisor) {
+          document.getElementById('ftoSupervisorSection').style.display = 'block';
+          loadFTOTraineesList();
+        }
+      } catch (e) {
+        console.warn('FTO progress error:', e);
+      }
+    }
+
+    async function loadFTOTraineesList() {
+      const tbody = document.getElementById('ftoTraineesTableBody');
+      try {
+        const res = await fetch('/api/admin/fto/trainees');
+        const data = await res.json();
+        if (!data.trainees || data.trainees.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" class="table-empty-msg">No active trainee assignments.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = data.trainees.map(t => `
+          <tr>
+            <td><strong>${escapeHtml(t.traineeUsername || t.traineeId)}</strong></td>
+            <td>${escapeHtml(t.trainerUsername || t.trainerId)}</td>
+            <td>${t.completedStages} / ${t.totalStages}</td>
+            <td><span class="status-pill ${t.isCertified ? 'status-pill-green' : 'status-pill-yellow'}">${t.isCertified ? 'CERTIFIED' : 'IN TRAINING'}</span></td>
+            <td>
+              <button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 2px 6px;" onclick="loadFTOProgress('${escapeHtml(t.traineeId)}')">[ VIEW CHECKLIST ]</button>
+            </td>
+          </tr>
+        `).join('');
+      } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="5" class="table-empty-msg">Error loading trainees.</td></tr>';
+      }
+    }
+
+    async function submitFTOAssignment(e) {
+      e.preventDefault();
+      const statusEl = document.getElementById('ftoAssignStatus');
+      statusEl.style.color = '#546675';
+      statusEl.innerText = 'Assigning trainer...';
+      const payload = {
+        traineeId: document.getElementById('ftoAssignTraineeId').value.trim(),
+        traineeUsername: document.getElementById('ftoAssignTraineeName').value.trim(),
+        trainerId: document.getElementById('ftoAssignTrainerId').value.trim(),
+        trainerUsername: document.getElementById('ftoAssignTrainerName').value.trim()
+      };
+      try {
+        const res = await fetch('/api/admin/fto/assign', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          statusEl.style.color = 'green';
+          statusEl.innerText = 'Trainer assigned successfully!';
+          loadFTOTraineesList();
+        } else {
+          statusEl.style.color = '#9E2A2B';
+          statusEl.innerText = data.error || 'Failed to assign trainer.';
+        }
+      } catch (err) {
+        statusEl.style.color = '#9E2A2B';
+        statusEl.innerText = 'Network error assigning trainer.';
+      }
+    }
+
+    function openFTOSignoffModal(traineeId, stage) {
+      document.getElementById('ftoSignoffTraineeId').value = traineeId;
+      document.getElementById('ftoSignoffStage').value = stage;
+      document.getElementById('ftoModalStageName').innerText = stage;
+      document.getElementById('ftoModalTraineeName').innerText = traineeId;
+      document.getElementById('ftoSignoffNotes').value = '';
+      document.getElementById('ftoSignoffStatusMsg').innerText = '';
+      document.getElementById('ftoSignoffModal').style.display = 'flex';
+    }
+
+    function closeFTOSignoffModal() {
+      document.getElementById('ftoSignoffModal').style.display = 'none';
+    }
+
+    async function submitFTOSignoff() {
+      const traineeId = document.getElementById('ftoSignoffTraineeId').value;
+      const stage = document.getElementById('ftoSignoffStage').value;
+      const notes = document.getElementById('ftoSignoffNotes').value;
+      const statusEl = document.getElementById('ftoSignoffStatusMsg');
+      statusEl.style.color = '#546675';
+      statusEl.innerText = 'Recording sign-off...';
+
+      try {
+        const res = await fetch('/api/fto/signoff', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ traineeId, stage, notes })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          statusEl.style.color = 'green';
+          statusEl.innerText = 'Stage signed off successfully!';
+          setTimeout(() => {
+            closeFTOSignoffModal();
+            loadFTOProgress(traineeId);
+          }, 800);
+        } else {
+          statusEl.style.color = '#9E2A2B';
+          statusEl.innerText = data.error || 'Failed to sign off stage.';
+        }
+      } catch (e) {
+        statusEl.style.color = '#9E2A2B';
+        statusEl.innerText = 'Network error recording signoff.';
+      }
+    }
+
+    // 4. Staff Flags Management Client Logic
+    let currentFlagMember = null;
+
+    function openStaffFlagModal(userId, robloxUsername) {
+      currentFlagMember = staffDirectoryAll.find(s => s.userId === userId);
+      document.getElementById('flagModalOfficerName').innerText = robloxUsername || userId;
+      document.getElementById('flagModalUserId').value = userId;
+      document.getElementById('flagLabelInput').value = '';
+      document.getElementById('flagReasonInput').value = '';
+      document.getElementById('flagModalStatusMsg').innerText = '';
+
+      renderFlagModalExistingList();
+      document.getElementById('staffFlagModal').style.display = 'flex';
+    }
+
+    function closeStaffFlagModal() {
+      document.getElementById('staffFlagModal').style.display = 'none';
+    }
+
+    function renderFlagModalExistingList() {
+      const listEl = document.getElementById('flagModalExistingList');
+      if (!currentFlagMember || !currentFlagMember.flags || currentFlagMember.flags.length === 0) {
+        listEl.innerHTML = '<span style="font-size: 11px; color: #546675; font-style: italic;">No active flags or commendations recorded.</span>';
+        return;
+      }
+      listEl.innerHTML = currentFlagMember.flags.map(f => `
+        <div style="display: flex; justify-content: space-between; align-items: center; background: #ECEFF1; padding: 4px 8px; border-radius: 2px; font-size: 11px;">
+          <div>
+            <strong>${escapeHtml(f.label)}</strong> (${escapeHtml(f.flagType)})
+            <div style="font-size: 10px; color: #546675;">${escapeHtml(f.reason || 'No notes')} · By ${escapeHtml(f.createdBy)}</div>
+          </div>
+          <button type="button" class="period-button period-button-secondary" style="font-size: 9px; padding: 2px 5px; color: #9E2A2B;" onclick="deleteStaffFlag('${escapeHtml(f.id)}')">[ ✕ ]</button>
+        </div>
+      `).join('');
+    }
+
+    async function submitStaffFlag() {
+      const userId = document.getElementById('flagModalUserId').value;
+      const flagType = document.getElementById('flagTypeSelect').value;
+      const label = document.getElementById('flagLabelInput').value.trim();
+      const reason = document.getElementById('flagReasonInput').value.trim();
+      const statusEl = document.getElementById('flagModalStatusMsg');
+
+      if (!label) {
+        statusEl.style.color = '#9E2A2B';
+        statusEl.innerText = 'Please specify a badge label.';
+        return;
+      }
+
+      statusEl.style.color = '#546675';
+      statusEl.innerText = 'Adding staff flag...';
+
+      try {
+        const res = await fetch('/api/admin/staff-flags', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'add', userId, flagType, label, reason })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          statusEl.style.color = 'green';
+          statusEl.innerText = 'Flag added successfully!';
+          document.getElementById('flagLabelInput').value = '';
+          document.getElementById('flagReasonInput').value = '';
+          await loadStaffDirectory();
+          currentFlagMember = staffDirectoryAll.find(s => s.userId === userId);
+          renderFlagModalExistingList();
+        } else {
+          statusEl.style.color = '#9E2A2B';
+          statusEl.innerText = data.error || 'Failed to add flag.';
+        }
+      } catch (err) {
+        statusEl.style.color = '#9E2A2B';
+        statusEl.innerText = 'Network error adding flag.';
+      }
+    }
+
+    async function deleteStaffFlag(flagId) {
+      if (!confirm('Remove this staff flag?')) return;
+      try {
+        await fetch('/api/admin/staff-flags', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'remove', flagId })
+        });
+        const userId = document.getElementById('flagModalUserId').value;
+        await loadStaffDirectory();
+        currentFlagMember = staffDirectoryAll.find(s => s.userId === userId);
+        renderFlagModalExistingList();
+      } catch (e) {}
+    }
+
+
     // Startup
-    loadOfficerSession();
+    loadOfficerSession().then(() => {
+      loadOfficerStats();
+      checkPushSubscriptionStatus();
+    });
     checkDutyStatus();
     updateActionFields();
     refreshBodycamStorageStatus();
   </script>
+
+  <!-- FTO Stage Signoff Modal -->
+  <div id="ftoSignoffModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 9999; align-items: center; justify-content: center; padding: 20px;">
+    <div style="background: var(--bg-surface, #FFFFFF); border: 2px solid #9E2A2B; max-width: 500px; width: 100%; padding: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">
+      <h3 id="ftoModalTitle" style="margin-top: 0; border-bottom: 1px solid #CFD8DC; padding-bottom: 8px;">FTO Stage Sign-off</h3>
+      <input type="hidden" id="ftoSignoffTraineeId" />
+      <input type="hidden" id="ftoSignoffStage" />
+      <p style="font-size: 12px; color: #546675;">
+        You are signing off on stage: <strong id="ftoModalStageName" style="color: #1E252D;"></strong> for officer <strong id="ftoModalTraineeName" style="color: #1E252D;"></strong>.
+      </p>
+      <label style="display: block; font-size: 11px; margin-bottom: 10px;">Evaluation Notes &amp; Observations:
+        <textarea id="ftoSignoffNotes" style="width: 100%; height: 80px; box-sizing: border-box; margin-top: 4px;" placeholder="Document trainee proficiency, radiocodes, driving, or documentation standards..."></textarea>
+      </label>
+      <div style="display: flex; justify-content: flex-end; gap: 8px;">
+        <button type="button" class="period-button period-button-secondary" onclick="closeFTOSignoffModal()">[ CANCEL ]</button>
+        <button type="button" class="period-button" onclick="submitFTOSignoff()">[ CONFIRM SIGNOFF ]</button>
+      </div>
+      <div id="ftoSignoffStatusMsg" style="margin-top: 8px; font-size: 11px; font-weight: 700;"></div>
+    </div>
+  </div>
+
+  <!-- Staff Flag Modal -->
+  <div id="staffFlagModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 9999; align-items: center; justify-content: center; padding: 20px;">
+    <div style="background: var(--bg-surface, #FFFFFF); border: 2px solid #9E2A2B; max-width: 520px; width: 100%; padding: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">
+      <h3 style="margin-top: 0; border-bottom: 1px solid #CFD8DC; padding-bottom: 8px;">Manage Staff Flags — <span id="flagModalOfficerName"></span></h3>
+      <input type="hidden" id="flagModalUserId" />
+      
+      <div style="margin-bottom: 14px;">
+        <h4 style="font-size: 11.5px; margin: 0 0 6px 0;">Existing Flags:</h4>
+        <div id="flagModalExistingList" style="display: flex; flex-direction: column; gap: 6px; max-height: 120px; overflow-y: auto;">
+          <!-- Loaded dynamically -->
+        </div>
+      </div>
+
+      <div style="border-top: 1px solid #ECEFF1; padding-top: 10px;">
+        <h4 style="font-size: 11.5px; margin: 0 0 8px 0;">Issue New Flag / Commendation:</h4>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+          <label style="font-size: 11px;">Flag Classification:
+            <select id="flagTypeSelect" style="width: 100%;">
+              <option value="commendation">Commendation (Green Badge)</option>
+              <option value="watch">Supervisory Watch (Yellow Badge)</option>
+              <option value="restriction">Patrol Restriction (Red Badge)</option>
+              <option value="custom">Administrative Note (Grey Badge)</option>
+            </select>
+          </label>
+          <label style="font-size: 11px;">Badge Label:
+            <input type="text" id="flagLabelInput" placeholder="e.g. Meritorious Service" style="width: 100%; box-sizing: border-box;" />
+          </label>
+        </div>
+        <label style="font-size: 11px; display: block; margin-bottom: 10px;">Reason / Case Reference:
+          <input type="text" id="flagReasonInput" placeholder="e.g. Commended by Sgt for Harrison Mall response" style="width: 100%; box-sizing: border-box;" />
+        </label>
+        <div style="display: flex; justify-content: flex-end; gap: 8px;">
+          <button type="button" class="period-button period-button-secondary" onclick="closeStaffFlagModal()">[ CLOSE ]</button>
+          <button type="button" class="period-button" onclick="submitStaffFlag()">[ ADD FLAG ]</button>
+        </div>
+        <div id="flagModalStatusMsg" style="margin-top: 8px; font-size: 11px; font-weight: 700;"></div>
+      </div>
+    </div>
+  </div>
+
 </body>
 </html>

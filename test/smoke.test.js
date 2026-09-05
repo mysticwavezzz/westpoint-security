@@ -181,3 +181,46 @@ test('GET /api/my-reports rejects unauthenticated requests', async () => {
   const res = await get('/api/my-reports');
   assert.strictEqual(res.status, 401);
 });
+
+test('GET /api/officer/stats rejects unauthenticated requests', async () => {
+  const res = await get('/api/officer/stats');
+  assert.strictEqual(res.status, 401);
+});
+
+test('GET /api/fto/progress rejects unauthenticated requests', async () => {
+  const res = await get('/api/fto/progress');
+  assert.strictEqual(res.status, 401);
+});
+
+test('POST /api/fto/signoff rejects unauthenticated requests', async () => {
+  const res = await post('/api/fto/signoff', { traineeId: '12345', stage: 'Orientation & Equipment' });
+  assert.strictEqual(res.status, 401);
+});
+
+test('POST /api/admin/fto/assign rejects unauthenticated requests', async () => {
+  const res = await post('/api/admin/fto/assign', { traineeId: '12345', trainerId: '67890' });
+  assert.strictEqual(res.status, 403);
+});
+
+test('GET /api/admin/fto/trainees rejects unauthenticated requests', async () => {
+  const res = await get('/api/admin/fto/trainees');
+  assert.strictEqual(res.status, 403);
+});
+
+test('POST /api/admin/staff-flags rejects unauthenticated requests', async () => {
+  const res = await post('/api/admin/staff-flags', { userId: '12345', flagType: 'commendation', label: 'Test' });
+  assert.strictEqual(res.status, 403);
+});
+
+test('GET /api/push/vapid-public-key returns public key', async () => {
+  const res = await get('/api/push/vapid-public-key');
+  assert.strictEqual(res.status, 200);
+  const body = JSON.parse(res.body);
+  assert.ok(typeof body.publicKey === 'string' && body.publicKey.length > 10);
+});
+
+test('POST /api/push/subscribe rejects unauthenticated requests', async () => {
+  const res = await post('/api/push/subscribe', { subscription: {} });
+  assert.strictEqual(res.status, 401);
+});
+
